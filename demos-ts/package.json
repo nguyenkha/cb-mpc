@@ -1,0 +1,18 @@
+{
+  "name": "cb-mpc-demos-ts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript demos for cb-mpc WebAssembly module",
+  "scripts": {
+    "build": "tsc",
+    "demo:curve-ops": "node dist/curve-ops.js",
+    "demo:ecdsa-2pc": "node dist/ecdsa-2pc.js",
+    "demo:ecdsa-mpc": "node dist/ecdsa-mpc.js",
+    "demo:agree-random": "node dist/agree-random.js",
+    "demo:all": "npm run build && npm run demo:curve-ops && npm run demo:ecdsa-2pc && npm run demo:ecdsa-mpc && npm run demo:agree-random"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.4.0"
+  }
+}

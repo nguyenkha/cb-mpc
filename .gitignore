@@ -28,3 +28,7 @@ wasm/cbmpc.js
 wasm/cbmpc.wasm
 wasm/dist/
 wasm/node_modules/
+
+# TypeScript demo build artifacts
+demos-ts/dist/
+demos-ts/node_modules/
