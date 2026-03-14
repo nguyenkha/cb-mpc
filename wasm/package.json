@@ -1,5 +1,5 @@
 {
-  "name": "@aspect-build/cb-mpc-wasm",
+  "name": "cb-mpc",
   "version": "0.1.0",
   "description": "cb-mpc cryptographic MPC library compiled to WebAssembly",
   "main": "dist/index.js",
