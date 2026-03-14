@@ -155,11 +155,13 @@ async function demoEcKeyMp() {
   // DKG
   console.log("  Running 3-party DKG...");
   const transports = createMockNetwork(3);
+  const curves = [mpc0.createCurve(NID_secp256k1), mpc1.createCurve(NID_secp256k1), mpc2.createCurve(NID_secp256k1)];
   const [key0, key1, key2] = await Promise.all([
-    mpc0.ecKeyMpDkg(transports[0], 0, names, NID_secp256k1),
-    mpc1.ecKeyMpDkg(transports[1], 1, names, NID_secp256k1),
-    mpc2.ecKeyMpDkg(transports[2], 2, names, NID_secp256k1),
+    mpc0.ecKeyMpDkg(transports[0], 3, 0, names, curves[0]),
+    mpc1.ecKeyMpDkg(transports[1], 3, 1, names, curves[1]),
+    mpc2.ecKeyMpDkg(transports[2], 3, 2, names, curves[2]),
   ]);
+  curves.forEach((c, i) => [mpc0, mpc1, mpc2][i].freeCurve(c));
 
   const info0 = mpc0.ecKeyMpInfo(key0);
   console.log(`  Public key: ${hexEncode(info0.publicKey).slice(0, 32)}...`);
@@ -192,9 +194,9 @@ async function demoEcKeyMp() {
   const signTransports = createMockNetwork(3);
 
   const [sig0, sig1, sig2] = await Promise.all([
-    mpc3.ecdsaMpSign(signTransports[0], 0, names, restored0, msgHash, 0),
-    mpc4.ecdsaMpSign(signTransports[1], 1, names, restored1, msgHash, 0),
-    mpc5.ecdsaMpSign(signTransports[2], 2, names, restored2, msgHash, 0),
+    mpc3.ecdsaMpSign(signTransports[0], 3, 0, names, restored0, msgHash, 0),
+    mpc4.ecdsaMpSign(signTransports[1], 3, 1, names, restored1, msgHash, 0),
+    mpc5.ecdsaMpSign(signTransports[2], 3, 2, names, restored2, msgHash, 0),
   ]);
   // Party 0 is the sig receiver
   const valid = mpc3.verifyDer(NID_secp256k1, restoredInfo.publicKey, msgHash, sig0);
