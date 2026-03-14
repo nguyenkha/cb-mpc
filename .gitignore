@@ -22,3 +22,9 @@ a.out
 # gh-pages files
 docsgen/
 node_modules/
+
+# WASM build artifacts
+wasm/cbmpc.js
+wasm/cbmpc.wasm
+wasm/dist/
+wasm/node_modules/

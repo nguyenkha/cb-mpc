@@ -72,6 +72,38 @@ openssl:
 		exit 1; \
 	fi
 
+.PHONY: openssl-wasm
+openssl-wasm:
+	@echo "Building custom OpenSSL for WebAssembly..."
+	${RUN_CMD} 'bash ./scripts/openssl/build-static-openssl-wasm.sh'
+
+.PHONY: build-wasm
+build-wasm:
+	@echo "Building cb-mpc for WebAssembly..."
+	@command -v emcmake >/dev/null 2>&1 || { echo "Error: Emscripten not found. Run 'source emsdk_env.sh' first."; exit 1; }
+	emcmake cmake -B build/wasm -S wasm \
+		-DCMAKE_BUILD_TYPE=Release
+	emmake cmake --build build/wasm -- -j$(CMAKE_NCORES)
+	@cp build/wasm/cbmpc.js wasm/cbmpc.js
+	@cp build/wasm/cbmpc.wasm wasm/cbmpc.wasm
+	@echo "WASM build output: wasm/cbmpc.js, wasm/cbmpc.wasm"
+
+.PHONY: build-wasm-types
+build-wasm-types:
+	@echo "Building TypeScript declarations..."
+	cd wasm && npm install && npm run build:types
+	@echo "TypeScript types output: wasm/dist/"
+
+.PHONY: wasm
+wasm: openssl-wasm build-wasm build-wasm-types
+	@echo "Full WASM build complete."
+
+.PHONY: clean-wasm
+clean-wasm:
+	rm -rf build/wasm
+	rm -f wasm/cbmpc.js wasm/cbmpc.wasm
+	rm -rf wasm/dist wasm/node_modules
+
 .PHONY: docker-run
 docker-run:
 	@echo "To run inside docker, you can run do the following"

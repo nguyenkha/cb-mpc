@@ -9,7 +9,7 @@
 #include <cpuid.h>
 #endif
 
-#ifdef __linux__
+#if defined(__linux__) && !defined(__EMSCRIPTEN__)
 
 #include <link.h>
 #include <linux/sockios.h>
@@ -26,11 +26,11 @@
 
 #endif
 
-#if defined(__linux__) || defined(__APPLE__)
+#if (defined(__linux__) || defined(__APPLE__)) && !defined(__EMSCRIPTEN__)
 #include <syslog.h>
 #endif
 
-#if defined(_LP64) && defined(__x86_64__)
+#if defined(_LP64) && defined(__x86_64__) && !defined(__EMSCRIPTEN__)
 extern "C" {
 #include <x86intrin.h>
 }
@@ -89,12 +89,14 @@ extern "C" {
 #include <chrono>
 #include <condition_variable>
 #include <cxxabi.h>
-#include <dirent.h>
 #include <mutex>
+#include <thread>
+
+#ifndef __EMSCRIPTEN__
+#include <dirent.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/utsname.h>
-#include <thread>
 #include <unistd.h>
 
 #ifdef __APPLE__
@@ -129,6 +131,13 @@ extern "C" {
 #ifdef __aarch64__
 #include <arm_neon.h>
 #endif
+
+#else  // __EMSCRIPTEN__
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <unistd.h>
+#endif  // __EMSCRIPTEN__
 
 #include <openssl/aes.h>
 #include <openssl/asn1.h>

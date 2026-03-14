@@ -70,6 +70,7 @@ error_t error(error_t rv, const std::string& text) { return error(rv, text, true
 
 error_t error(error_t rv) { return error(rv, ""); }
 
+#ifndef __EMSCRIPTEN__
 struct BacktraceState {
   void** current;
   void** end;
@@ -278,6 +279,11 @@ void print_stack_trace() {
     out_error(ss.get());
   }
 }
+#else   // __EMSCRIPTEN__
+void print_stack_trace() {
+  // Stack traces not available in WASM
+}
+#endif  // __EMSCRIPTEN__
 
 void assert_failed(const char* msg, const char* file, int line) {
   if (!thread_local_storage_log_disabled) {

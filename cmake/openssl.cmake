@@ -10,6 +10,7 @@
 #   - macOS (x86_64): scripts/openssl/build-static-openssl-macos.sh
 #   - macOS (ARM64):  scripts/openssl/build-static-openssl-macos-m1.sh
 #   - Linux:          scripts/openssl/build-static-openssl-linux.sh
+#   - WASM:           scripts/openssl/build-static-openssl-wasm.sh
 #
 macro(link_openssl TARGET_NAME)
   if(NOT DEFINED CBMPC_OPENSSL_ROOT)
@@ -20,7 +21,17 @@ macro(link_openssl TARGET_NAME)
     endif()
   endif()
 
-  if(IS_LINUX)
+  if(IS_WASM)
+    if(NOT DEFINED CBMPC_OPENSSL_ROOT)
+      if(DEFINED ENV{CBMPC_OPENSSL_ROOT})
+        set(CBMPC_OPENSSL_ROOT $ENV{CBMPC_OPENSSL_ROOT})
+      else()
+        set(CBMPC_OPENSSL_ROOT "/usr/local/opt/openssl@3.2.0-wasm")
+      endif()
+    endif()
+    set(_cbmpc_openssl_include "${CBMPC_OPENSSL_ROOT}/include")
+    set(_cbmpc_openssl_lib "${CBMPC_OPENSSL_ROOT}/lib/libcrypto.a")
+  elseif(IS_LINUX)
     set(_cbmpc_openssl_include "${CBMPC_OPENSSL_ROOT}/include")
     set(_cbmpc_openssl_lib "${CBMPC_OPENSSL_ROOT}/lib64/libcrypto.a")
     if(NOT EXISTS "${_cbmpc_openssl_lib}")

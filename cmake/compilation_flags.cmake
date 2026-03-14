@@ -31,6 +31,11 @@ else()
   set_cxx_flags("-Wno-maybe-uninitialized")
 endif()
 
+if(IS_WASM)
+  set(CMAKE_ARCH "wasm32")
+  # WASM does not support hardware-specific intrinsics
+endif()
+
 if(IS_ARM64)
   set(CMAKE_ARCH "arm64")
   set_cxx_flags("-march=armv8-a+crypto")
