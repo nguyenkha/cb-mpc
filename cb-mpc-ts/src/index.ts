@@ -11,9 +11,11 @@
  * backend-agnostic — it works with any CbMpcModule implementation.
  */
 
-import createDebug from "debug";
+import debug_module from "debug";
 import type { CbMpcModule } from "./module.js";
 
+// Handle both ESM default and CJS module.exports
+const createDebug = (typeof debug_module === "function" ? debug_module : (debug_module as any).default) as typeof debug_module;
 const debug = createDebug("cb-mpc");
 import type {
   CurveHandle,
