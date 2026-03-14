@@ -21,7 +21,7 @@ function hexEncode(bytes: Uint8Array): string {
 }
 
 async function sha256(data: Uint8Array): Promise<Uint8Array> {
-  const buf = await crypto.subtle.digest("SHA-256", data as ArrayBufferView<ArrayBuffer>);
+  const buf = await crypto.subtle.digest("SHA-256", data as unknown as ArrayBuffer);
   return new Uint8Array(buf);
 }
 
