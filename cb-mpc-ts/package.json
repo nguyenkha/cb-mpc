@@ -29,7 +29,8 @@
     "demo:eddsa-2pc": "bun run examples/eddsa-2pc.ts",
     "demo:eddsa-mpc": "bun run examples/eddsa-mpc.ts",
     "demo:agree-random": "bun run examples/agree-random.ts",
-    "demo:bun-ffi": "bun run examples/bun-ffi-demo.ts"
+    "demo:bun-ffi": "bun run examples/bun-ffi-demo.ts",
+    "demo:key-serialization": "bun run examples/key-serialization.ts"
   },
   "devDependencies": {
     "@types/debug": "^4.1.12",
