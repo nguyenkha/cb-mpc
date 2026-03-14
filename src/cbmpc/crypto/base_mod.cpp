@@ -4,7 +4,7 @@
 
 namespace coinbase::crypto {
 
-#if defined(TARGET_IPHONE_SIMULATOR) && TARGET_IPHONE_SIMULATOR
+#if (defined(TARGET_IPHONE_SIMULATOR) && TARGET_IPHONE_SIMULATOR) || defined(__EMSCRIPTEN__)
 static thread_local int vartime_scope = 1;
 #else
 static thread_local int vartime_scope = 0;

@@ -7,10 +7,14 @@
  *   3. Key Refresh
  *
  * All parties run concurrently through an in-memory mock transport.
+ *
+ * IMPORTANT: Each concurrent MPC party must use its own CbMpc instance
+ * (separate WASM module) because Emscripten ASYNCIFY only supports one
+ * suspended async call stack per module at a time.
  */
 
 import { initCbMpc, CbMpc, NID_secp256k1 } from "cb-mpc";
-import type { CurveHandle, EcKeyMpHandle } from "cb-mpc";
+import type { EcKeyMpHandle } from "cb-mpc";
 import { createMockNetwork } from "./mock-transport";
 
 const N_PARTIES = 3;
@@ -20,17 +24,20 @@ async function main() {
   console.log("=== ECDSA Multi-Party Computation Demo ===\n");
   console.log(`Parties: ${N_PARTIES} (${PARTY_NAMES.join(", ")})\n`);
 
-  const mpc = await initCbMpc();
+  // Each party needs its own WASM module instance for concurrent execution.
+  const mpcs = await Promise.all(
+    Array.from({ length: N_PARTIES }, () => initCbMpc()),
+  );
 
-  // Create a curve handle for DKG
-  const curve = mpc.createCurve(NID_secp256k1);
+  // Create a curve handle (can use any instance for synchronous ops)
+  const curve = mpcs[0].createCurve(NID_secp256k1);
 
   // --- Step 1: Multi-party DKG ---
   console.log("1. Running Multi-party DKG...");
-  const keys = await runMpDkg(mpc, curve);
+  const keys = await runMpDkg(mpcs);
 
   // All parties should have the same public key
-  const infos = keys.map((k) => mpc.ecKeyMpInfo(k));
+  const infos = keys.map((k, i) => mpcs[i].ecKeyMpInfo(k));
   console.log(`   Public key: ${hexEncode(infos[0].publicKey)}`);
   const allSamePubKey = infos.every(
     (info) => hexEncode(info.publicKey) === hexEncode(infos[0].publicKey),
@@ -50,18 +57,18 @@ async function main() {
 
   // Party 0 is the signature receiver
   const sigReceiver = 0;
-  const signature = await runMpSign(mpc, keys, messageHash, sigReceiver);
+  const signature = await runMpSign(mpcs, keys, messageHash, sigReceiver);
   console.log(`   Signature (${signature.length} bytes): ${hexEncode(signature)}`);
 
   // Verify the signature using the public key
-  const valid = mpc.verifyDer(NID_secp256k1, infos[0].publicKey, messageHash, signature);
+  const valid = mpcs[0].verifyDer(NID_secp256k1, infos[0].publicKey, messageHash, signature);
   console.log(`   Signature valid: ${valid}`);
   console.log();
 
   // --- Step 3: Key Refresh ---
   console.log("3. Running Multi-party Key Refresh...");
-  const newKeys = await runMpRefresh(mpc, keys);
-  const newInfos = newKeys.map((k) => mpc.ecKeyMpInfo(k));
+  const newKeys = await runMpRefresh(mpcs, keys);
+  const newInfos = newKeys.map((k, i) => mpcs[i].ecKeyMpInfo(k));
 
   console.log(`   New public key: ${hexEncode(newInfos[0].publicKey)}`);
   console.log(`   Public key unchanged: ${hexEncode(infos[0].publicKey) === hexEncode(newInfos[0].publicKey)}`);
@@ -78,47 +85,54 @@ async function main() {
   const message2 = new TextEncoder().encode("Signed after refresh");
   const messageHash2 = await sha256(message2);
 
-  const signature2 = await runMpSign(mpc, newKeys, messageHash2, sigReceiver);
-  const valid2 = mpc.verifyDer(NID_secp256k1, newInfos[0].publicKey, messageHash2, signature2);
+  const signature2 = await runMpSign(mpcs, newKeys, messageHash2, sigReceiver);
+  const valid2 = mpcs[0].verifyDer(NID_secp256k1, newInfos[0].publicKey, messageHash2, signature2);
   console.log(`   Signature valid: ${valid2}`);
   console.log();
 
   // --- Step 5: Key Serialization ---
   console.log("5. Key serialization round-trip...");
-  const serialized = mpc.serializeEcKeyMp(keys[0]);
+  const serialized = mpcs[0].serializeEcKeyMp(keys[0]);
   console.log(`   Serialized to ${serialized.length} parts`);
 
-  const deserialized = mpc.deserializeEcKeyMp(serialized);
-  const deserInfo = mpc.ecKeyMpInfo(deserialized);
+  const deserialized = mpcs[0].deserializeEcKeyMp(serialized);
+  const deserInfo = mpcs[0].ecKeyMpInfo(deserialized);
   console.log(`   Deserialized party name: ${deserInfo.partyName}`);
   console.log(`   Public key matches: ${hexEncode(deserInfo.publicKey) === hexEncode(infos[0].publicKey)}`);
-  mpc.freeEcKeyMp(deserialized);
+  mpcs[0].freeEcKeyMp(deserialized);
   console.log();
 
   // --- Cleanup ---
-  for (const k of keys) mpc.freeEcKeyMp(k);
-  for (const k of newKeys) mpc.freeEcKeyMp(k);
-  mpc.freeCurve(curve);
+  for (let i = 0; i < N_PARTIES; i++) {
+    mpcs[i].freeEcKeyMp(keys[i]);
+    mpcs[i].freeEcKeyMp(newKeys[i]);
+  }
+  mpcs[0].freeCurve(curve);
 
   console.log("=== Demo complete ===");
 }
 
-/** Run N-party DKG. */
-async function runMpDkg(mpc: CbMpc, curve: CurveHandle): Promise<EcKeyMpHandle[]> {
+/** Run N-party DKG. Each party uses its own CbMpc instance. */
+async function runMpDkg(mpcs: CbMpc[]): Promise<EcKeyMpHandle[]> {
   const transports = createMockNetwork(N_PARTIES);
+  // Each party needs its own curve handle from its own WASM instance
+  const curves = mpcs.map((mpc) => mpc.createCurve(NID_secp256k1));
 
   const keys = await Promise.all(
-    Array.from({ length: N_PARTIES }, (_, i) =>
-      mpc.ecKeyMpDkg(transports[i], N_PARTIES, i, PARTY_NAMES, curve),
+    mpcs.map((mpc, i) =>
+      mpc.ecKeyMpDkg(transports[i], N_PARTIES, i, PARTY_NAMES, curves[i]),
     ),
   );
+
+  // Free per-party curve handles
+  curves.forEach((c, i) => mpcs[i].freeCurve(c));
 
   return keys;
 }
 
 /** Run N-party signing. Returns the signature. */
 async function runMpSign(
-  mpc: CbMpc,
+  mpcs: CbMpc[],
   keys: EcKeyMpHandle[],
   messageHash: Uint8Array,
   sigReceiver: number,
@@ -126,7 +140,7 @@ async function runMpSign(
   const transports = createMockNetwork(N_PARTIES);
 
   const results = await Promise.all(
-    Array.from({ length: N_PARTIES }, (_, i) =>
+    mpcs.map((mpc, i) =>
       mpc.ecdsaMpSign(transports[i], N_PARTIES, i, PARTY_NAMES, keys[i], messageHash, sigReceiver),
     ),
   );
@@ -138,12 +152,12 @@ async function runMpSign(
 }
 
 /** Run N-party key refresh. */
-async function runMpRefresh(mpc: CbMpc, keys: EcKeyMpHandle[]): Promise<EcKeyMpHandle[]> {
+async function runMpRefresh(mpcs: CbMpc[], keys: EcKeyMpHandle[]): Promise<EcKeyMpHandle[]> {
   const transports = createMockNetwork(N_PARTIES);
   const sessionId = crypto.getRandomValues(new Uint8Array(32));
 
   const newKeys = await Promise.all(
-    Array.from({ length: N_PARTIES }, (_, i) =>
+    mpcs.map((mpc, i) =>
       mpc.ecKeyMpRefresh(transports[i], N_PARTIES, i, PARTY_NAMES, keys[i], sessionId),
     ),
   );

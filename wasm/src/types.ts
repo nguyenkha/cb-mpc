@@ -179,6 +179,9 @@ export interface CbMpcWasmModule {
   stringToUTF8(str: string, outPtr: number, maxBytesToWrite: number): void;
   lengthBytesUTF8(str: string): number;
 
+  // Entropy seeding
+  _wasm_seed_random(ptr: number, size: number): number;
+
   // Transport callback registry (set up by our wrapper)
   _transportCallbacks: Record<number, DataTransport>;
 }

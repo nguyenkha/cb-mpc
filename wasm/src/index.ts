@@ -56,6 +56,25 @@ export async function initCbMpc(
   // Initialize transport callback registry on the module
   (wasm as CbMpcWasmModule)._transportCallbacks = {};
 
+  // Seed OpenSSL's PRNG — WASM has no native entropy source, so we
+  // inject 32 bytes from the host's CSPRNG (Web Crypto / Node crypto).
+  const entropy = new Uint8Array(32);
+  if (typeof globalThis.crypto !== "undefined" && globalThis.crypto.getRandomValues) {
+    globalThis.crypto.getRandomValues(entropy);
+  } else {
+    // Node.js fallback
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore -- crypto is a Node.js built-in
+    const { randomFillSync } = await import("crypto");
+    randomFillSync(entropy);
+  }
+  const entropyPtr = writeBytes(wasm, entropy);
+  const randStatus = wasm._wasm_seed_random(entropyPtr, entropy.length);
+  wasm._free(entropyPtr);
+  if (randStatus !== 1) {
+    console.warn("cb-mpc: OpenSSL PRNG seeding may have failed (RAND_status=" + randStatus + ")");
+  }
+
   return new CbMpc(wasm);
 }
 
@@ -97,6 +116,23 @@ function freeCmem(wasm: CbMpcWasmModule, cmemPtr: number): void {
   const dataPtr = wasm.getValue(cmemPtr, "*");
   if (dataPtr) wasm._free(dataPtr);
   wasm._free(cmemPtr);
+}
+
+/** Get x,y from a point ref and return SEC1 uncompressed format (04 || x || y). */
+function pointToSec1Uncompressed(wasm: CbMpcWasmModule, pointRef: number): Uint8Array {
+  const xCmem = wasm._malloc(8);
+  const yCmem = wasm._malloc(8);
+  wasm.ccall("wasm_ecc_point_get_x", null, ["number", "number"], [pointRef, xCmem]);
+  wasm.ccall("wasm_ecc_point_get_y", null, ["number", "number"], [pointRef, yCmem]);
+  const x = readCmem(wasm, xCmem);
+  const y = readCmem(wasm, yCmem);
+  freeCmem(wasm, xCmem);
+  freeCmem(wasm, yCmem);
+  const result = new Uint8Array(1 + x.length + y.length);
+  result[0] = 0x04; // uncompressed point prefix
+  result.set(x, 1);
+  result.set(y, 1 + x.length);
+  return result;
 }
 
 /** Write a cmems_t (array of buffers) to the WASM heap. Returns pointer. */
@@ -210,10 +246,11 @@ export class CbMpc {
    * Caller must call {@link freeCurve} when done.
    */
   createCurve(curveCode: number): CurveHandle {
-    const refPtr = allocRef(this.wasm);
-    const ref = this.wasm.ccall("new_ecurve", "number", ["number"], [curveCode]) as number;
-    this.wasm._free(refPtr);
-    return ref as unknown as CurveHandle;
+    const outPtr = this.wasm._malloc(4); // ecurve_ref = { void* opaque }
+    this.wasm.ccall("wasm_new_ecurve", null, ["number", "number"], [curveCode, outPtr]);
+    const handle = this.wasm.getValue(outPtr, "*");
+    this.wasm._free(outPtr);
+    return handle as unknown as CurveHandle;
   }
 
   /** Free a curve handle. */
@@ -221,34 +258,34 @@ export class CbMpc {
     // new_ecurve returns ecurve_ref by value (struct copy), need to write to stack
     const refPtr = this.wasm._malloc(4);
     this.wasm.setValue(refPtr, handle as unknown as number, "*");
-    this.wasm.ccall("free_ecurve", null, ["number"], [refPtr]);
+    this.wasm.ccall("wasm_free_ecurve", null, ["number"], [refPtr]);
     this.wasm._free(refPtr);
   }
 
   /** Get the generator point of a curve. Caller must free the returned point. */
   curveGenerator(curve: CurveHandle): PointHandle {
-    const refPtr = this.wasm._malloc(4);
-    this.wasm.setValue(refPtr, curve as unknown as number, "*");
-    const point = this.wasm.ccall("ecurve_generator", "number", ["number"], [refPtr]) as number;
-    this.wasm._free(refPtr);
-    return point as unknown as PointHandle;
+    const curveRef = this.wasm._malloc(4);
+    this.wasm.setValue(curveRef, curve as unknown as number, "*");
+    const outPtr = this.wasm._malloc(4);
+    this.wasm.ccall("wasm_ecurve_generator", null, ["number", "number"], [curveRef, outPtr]);
+    const handle = this.wasm.getValue(outPtr, "*");
+    this.wasm._free(curveRef);
+    this.wasm._free(outPtr);
+    return handle as unknown as PointHandle;
   }
 
   /** Get the order of the curve as big-endian bytes. */
   curveOrder(curve: CurveHandle): Uint8Array {
-    const refPtr = this.wasm._malloc(4);
-    this.wasm.setValue(refPtr, curve as unknown as number, "*");
-    const cmemPtr = this.wasm._malloc(8);
-    // ecurve_order returns cmem_t by value; ccall can't handle that.
-    // We'll call it directly and read the return value from the stack.
-    const resultCmem = this.wasm.ccall("ecurve_order", "number", ["number"], [refPtr]);
-    this.wasm._free(refPtr);
-    // For struct returns, Emscripten uses a hidden sret pointer. Read the cmem_t.
-    const dataPtr = this.wasm.getValue(resultCmem as number, "*");
-    const size = this.wasm.getValue((resultCmem as number) + 4, "i32");
+    const curveRef = this.wasm._malloc(4);
+    this.wasm.setValue(curveRef, curve as unknown as number, "*");
+    const cmemOut = this.wasm._malloc(8);
+    this.wasm.ccall("wasm_ecurve_order", null, ["number", "number"], [curveRef, cmemOut]);
+    const dataPtr = this.wasm.getValue(cmemOut, "*");
+    const size = this.wasm.getValue(cmemOut + 4, "i32");
     const result = readBytes(this.wasm, dataPtr, size);
     this.wasm._free(dataPtr);
-    this.wasm._free(cmemPtr);
+    this.wasm._free(cmemOut);
+    this.wasm._free(curveRef);
     return result;
   }
 
@@ -263,14 +300,16 @@ export class CbMpc {
 
   /** Generate a random scalar in the curve's field. */
   randomScalar(curve: CurveHandle): Uint8Array {
-    const refPtr = this.wasm._malloc(4);
-    this.wasm.setValue(refPtr, curve as unknown as number, "*");
-    const cmem = this.wasm.ccall("ecurve_random_scalar", "number", ["number"], [refPtr]) as number;
-    this.wasm._free(refPtr);
-    const dataPtr = this.wasm.getValue(cmem, "*");
-    const size = this.wasm.getValue(cmem + 4, "i32");
+    const curveRef = this.wasm._malloc(4);
+    this.wasm.setValue(curveRef, curve as unknown as number, "*");
+    const cmemOut = this.wasm._malloc(8);
+    this.wasm.ccall("wasm_ecurve_random_scalar", null, ["number", "number"], [curveRef, cmemOut]);
+    const dataPtr = this.wasm.getValue(cmemOut, "*");
+    const size = this.wasm.getValue(cmemOut + 4, "i32");
     const result = readBytes(this.wasm, dataPtr, size);
     this.wasm._free(dataPtr);
+    this.wasm._free(cmemOut);
+    this.wasm._free(curveRef);
     return result;
   }
 
@@ -281,29 +320,28 @@ export class CbMpc {
   /** Deserialize a point from bytes. Caller must free. */
   pointFromBytes(data: Uint8Array): PointHandle {
     const cmemPtr = writeCmem(this.wasm, data);
-    // ecc_point_from_bytes takes cmem_t by value (8 bytes on stack)
-    const dataFieldPtr = this.wasm.getValue(cmemPtr, "*");
-    const sizeField = this.wasm.getValue(cmemPtr + 4, "i32");
-    const point = this.wasm.ccall(
-      "ecc_point_from_bytes",
-      "number",
-      ["number", "number"],
-      [dataFieldPtr, sizeField],
-    ) as number;
+    const outPtr = this.wasm._malloc(4);
+    this.wasm.ccall("wasm_ecc_point_from_bytes", null,
+      ["number", "number", "number"],
+      [this.wasm.getValue(cmemPtr, "*"), this.wasm.getValue(cmemPtr + 4, "i32"), outPtr]);
+    const handle = this.wasm.getValue(outPtr, "*");
+    this.wasm._free(outPtr);
     freeCmem(this.wasm, cmemPtr);
-    return point as unknown as PointHandle;
+    return handle as unknown as PointHandle;
   }
 
   /** Serialize a point to bytes. */
   pointToBytes(point: PointHandle): Uint8Array {
     const refPtr = this.wasm._malloc(4);
     this.wasm.setValue(refPtr, point as unknown as number, "*");
-    const cmem = this.wasm.ccall("ecc_point_to_bytes", "number", ["number"], [refPtr]) as number;
-    this.wasm._free(refPtr);
-    const dataPtr = this.wasm.getValue(cmem, "*");
-    const size = this.wasm.getValue(cmem + 4, "i32");
+    const cmemOut = this.wasm._malloc(8);
+    this.wasm.ccall("wasm_ecc_point_to_bytes", null, ["number", "number"], [refPtr, cmemOut]);
+    const dataPtr = this.wasm.getValue(cmemOut, "*");
+    const size = this.wasm.getValue(cmemOut + 4, "i32");
     const result = readBytes(this.wasm, dataPtr, size);
     this.wasm._free(dataPtr);
+    this.wasm._free(cmemOut);
+    this.wasm._free(refPtr);
     return result;
   }
 
@@ -311,12 +349,14 @@ export class CbMpc {
   pointGetX(point: PointHandle): Uint8Array {
     const refPtr = this.wasm._malloc(4);
     this.wasm.setValue(refPtr, point as unknown as number, "*");
-    const cmem = this.wasm.ccall("ecc_point_get_x", "number", ["number"], [refPtr]) as number;
-    this.wasm._free(refPtr);
-    const dataPtr = this.wasm.getValue(cmem, "*");
-    const size = this.wasm.getValue(cmem + 4, "i32");
+    const cmemOut = this.wasm._malloc(8);
+    this.wasm.ccall("wasm_ecc_point_get_x", null, ["number", "number"], [refPtr, cmemOut]);
+    const dataPtr = this.wasm.getValue(cmemOut, "*");
+    const size = this.wasm.getValue(cmemOut + 4, "i32");
     const result = readBytes(this.wasm, dataPtr, size);
     this.wasm._free(dataPtr);
+    this.wasm._free(cmemOut);
+    this.wasm._free(refPtr);
     return result;
   }
 
@@ -324,12 +364,14 @@ export class CbMpc {
   pointGetY(point: PointHandle): Uint8Array {
     const refPtr = this.wasm._malloc(4);
     this.wasm.setValue(refPtr, point as unknown as number, "*");
-    const cmem = this.wasm.ccall("ecc_point_get_y", "number", ["number"], [refPtr]) as number;
-    this.wasm._free(refPtr);
-    const dataPtr = this.wasm.getValue(cmem, "*");
-    const size = this.wasm.getValue(cmem + 4, "i32");
+    const cmemOut = this.wasm._malloc(8);
+    this.wasm.ccall("wasm_ecc_point_get_y", null, ["number", "number"], [refPtr, cmemOut]);
+    const dataPtr = this.wasm.getValue(cmemOut, "*");
+    const size = this.wasm.getValue(cmemOut + 4, "i32");
     const result = readBytes(this.wasm, dataPtr, size);
     this.wasm._free(dataPtr);
+    this.wasm._free(cmemOut);
+    this.wasm._free(refPtr);
     return result;
   }
 
@@ -346,17 +388,15 @@ export class CbMpc {
     const refPtr = this.wasm._malloc(4);
     this.wasm.setValue(refPtr, point as unknown as number, "*");
     const cmemPtr = writeCmem(this.wasm, scalar);
-    const dataFieldPtr = this.wasm.getValue(cmemPtr, "*");
-    const sizeField = this.wasm.getValue(cmemPtr + 4, "i32");
-    const result = this.wasm.ccall(
-      "ecc_point_multiply",
-      "number",
-      ["number", "number", "number"],
-      [refPtr, dataFieldPtr, sizeField],
-    ) as number;
+    const outPtr = this.wasm._malloc(4);
+    this.wasm.ccall("wasm_ecc_point_multiply", null,
+      ["number", "number", "number", "number"],
+      [refPtr, this.wasm.getValue(cmemPtr, "*"), this.wasm.getValue(cmemPtr + 4, "i32"), outPtr]);
+    const handle = this.wasm.getValue(outPtr, "*");
     this.wasm._free(refPtr);
+    this.wasm._free(outPtr);
     freeCmem(this.wasm, cmemPtr);
-    return result as unknown as PointHandle;
+    return handle as unknown as PointHandle;
   }
 
   /** Point addition. Caller must free returned point. */
@@ -365,15 +405,13 @@ export class CbMpc {
     const ref2 = this.wasm._malloc(4);
     this.wasm.setValue(ref1, p1 as unknown as number, "*");
     this.wasm.setValue(ref2, p2 as unknown as number, "*");
-    const result = this.wasm.ccall(
-      "ecc_point_add",
-      "number",
-      ["number", "number"],
-      [ref1, ref2],
-    ) as number;
+    const outPtr = this.wasm._malloc(4);
+    this.wasm.ccall("wasm_ecc_point_add", null, ["number", "number", "number"], [ref1, ref2, outPtr]);
+    const handle = this.wasm.getValue(outPtr, "*");
     this.wasm._free(ref1);
     this.wasm._free(ref2);
-    return result as unknown as PointHandle;
+    this.wasm._free(outPtr);
+    return handle as unknown as PointHandle;
   }
 
   /** Point subtraction. Caller must free returned point. */
@@ -382,15 +420,13 @@ export class CbMpc {
     const ref2 = this.wasm._malloc(4);
     this.wasm.setValue(ref1, p1 as unknown as number, "*");
     this.wasm.setValue(ref2, p2 as unknown as number, "*");
-    const result = this.wasm.ccall(
-      "ecc_point_subtract",
-      "number",
-      ["number", "number"],
-      [ref1, ref2],
-    ) as number;
+    const outPtr = this.wasm._malloc(4);
+    this.wasm.ccall("wasm_ecc_point_subtract", null, ["number", "number", "number"], [ref1, ref2, outPtr]);
+    const handle = this.wasm.getValue(outPtr, "*");
     this.wasm._free(ref1);
     this.wasm._free(ref2);
-    return result as unknown as PointHandle;
+    this.wasm._free(outPtr);
+    return handle as unknown as PointHandle;
   }
 
   /** Check if a point is the point at infinity. */
@@ -423,7 +459,7 @@ export class CbMpc {
   freePoint(point: PointHandle): void {
     const refPtr = this.wasm._malloc(4);
     this.wasm.setValue(refPtr, point as unknown as number, "*");
-    this.wasm.ccall("free_ecc_point", null, ["number"], [refPtr]);
+    this.wasm.ccall("wasm_free_ecc_point", null, ["number"], [refPtr]);
     this.wasm._free(refPtr);
   }
 
@@ -432,17 +468,15 @@ export class CbMpc {
     const curveRef = this.wasm._malloc(4);
     this.wasm.setValue(curveRef, curve as unknown as number, "*");
     const cmemPtr = writeCmem(this.wasm, scalar);
-    const dataFieldPtr = this.wasm.getValue(cmemPtr, "*");
-    const sizeField = this.wasm.getValue(cmemPtr + 4, "i32");
-    const result = this.wasm.ccall(
-      "ecurve_mul_generator",
-      "number",
-      ["number", "number", "number"],
-      [curveRef, dataFieldPtr, sizeField],
-    ) as number;
+    const outPtr = this.wasm._malloc(4);
+    this.wasm.ccall("wasm_ecurve_mul_generator", null,
+      ["number", "number", "number", "number"],
+      [curveRef, this.wasm.getValue(cmemPtr, "*"), this.wasm.getValue(cmemPtr + 4, "i32"), outPtr]);
+    const handle = this.wasm.getValue(outPtr, "*");
     this.wasm._free(curveRef);
+    this.wasm._free(outPtr);
     freeCmem(this.wasm, cmemPtr);
-    return result as unknown as PointHandle;
+    return handle as unknown as PointHandle;
   }
 
   /**
@@ -455,25 +489,25 @@ export class CbMpc {
     hash: Uint8Array,
     derSig: Uint8Array,
   ): boolean {
-    const pubPtr = writeCmem(this.wasm, publicKeyOct);
-    const hashPtr = writeCmem(this.wasm, hash);
-    const sigPtr = writeCmem(this.wasm, derSig);
+    const pubPtr = writeBytes(this.wasm, publicKeyOct);
+    const hashPtr = writeBytes(this.wasm, hash);
+    const sigPtr = writeBytes(this.wasm, derSig);
 
     const result = this.wasm.ccall(
-      "ecc_verify_der",
+      "wasm_ecc_verify_der",
       "number",
       ["number", "number", "number", "number", "number", "number", "number"],
       [
         curveCode,
-        this.wasm.getValue(pubPtr, "*"), this.wasm.getValue(pubPtr + 4, "i32"),
-        this.wasm.getValue(hashPtr, "*"), this.wasm.getValue(hashPtr + 4, "i32"),
-        this.wasm.getValue(sigPtr, "*"), this.wasm.getValue(sigPtr + 4, "i32"),
+        pubPtr, publicKeyOct.length,
+        hashPtr, hash.length,
+        sigPtr, derSig.length,
       ],
     ) as number;
 
-    freeCmem(this.wasm, pubPtr);
-    freeCmem(this.wasm, hashPtr);
-    freeCmem(this.wasm, sigPtr);
+    this.wasm._free(pubPtr);
+    this.wasm._free(hashPtr);
+    this.wasm._free(sigPtr);
     return result === 0;
   }
 
@@ -485,19 +519,19 @@ export class CbMpc {
   bnAdd(a: Uint8Array, b: Uint8Array): Uint8Array {
     const cmemA = writeCmem(this.wasm, a);
     const cmemB = writeCmem(this.wasm, b);
-    const result = this.wasm.ccall(
-      "bn_add",
-      "number",
-      ["number", "number", "number", "number"],
+    const cmemOut = this.wasm._malloc(8);
+    this.wasm.ccall("wasm_bn_add", null,
+      ["number", "number", "number", "number", "number"],
       [
         this.wasm.getValue(cmemA, "*"), this.wasm.getValue(cmemA + 4, "i32"),
         this.wasm.getValue(cmemB, "*"), this.wasm.getValue(cmemB + 4, "i32"),
-      ],
-    ) as number;
-    const dataPtr = this.wasm.getValue(result, "*");
-    const size = this.wasm.getValue(result + 4, "i32");
+        cmemOut,
+      ]);
+    const dataPtr = this.wasm.getValue(cmemOut, "*");
+    const size = this.wasm.getValue(cmemOut + 4, "i32");
     const out = readBytes(this.wasm, dataPtr, size);
     this.wasm._free(dataPtr);
+    this.wasm._free(cmemOut);
     freeCmem(this.wasm, cmemA);
     freeCmem(this.wasm, cmemB);
     return out;
@@ -509,20 +543,20 @@ export class CbMpc {
     this.wasm.setValue(curveRef, curve as unknown as number, "*");
     const cmemA = writeCmem(this.wasm, a);
     const cmemB = writeCmem(this.wasm, b);
-    const result = this.wasm.ccall(
-      "ec_mod_add",
-      "number",
-      ["number", "number", "number", "number", "number"],
+    const cmemOut = this.wasm._malloc(8);
+    this.wasm.ccall("wasm_ec_mod_add", null,
+      ["number", "number", "number", "number", "number", "number"],
       [
         curveRef,
         this.wasm.getValue(cmemA, "*"), this.wasm.getValue(cmemA + 4, "i32"),
         this.wasm.getValue(cmemB, "*"), this.wasm.getValue(cmemB + 4, "i32"),
-      ],
-    ) as number;
-    const dataPtr = this.wasm.getValue(result, "*");
-    const size = this.wasm.getValue(result + 4, "i32");
+        cmemOut,
+      ]);
+    const dataPtr = this.wasm.getValue(cmemOut, "*");
+    const size = this.wasm.getValue(cmemOut + 4, "i32");
     const out = readBytes(this.wasm, dataPtr, size);
     this.wasm._free(dataPtr);
+    this.wasm._free(cmemOut);
     this.wasm._free(curveRef);
     freeCmem(this.wasm, cmemA);
     freeCmem(this.wasm, cmemB);
@@ -730,32 +764,29 @@ export class CbMpc {
       "mpc_ecdsa2p_key_get_curve_code", "number", ["number"], [keyRef],
     ) as number;
 
-    // Get public key Q
-    const qHandle = this.wasm.ccall(
-      "mpc_ecdsa2p_key_get_Q", "number", ["number"], [keyRef],
-    ) as number;
+    // Get public key Q as SEC1 uncompressed format (04 || x || y)
+    const qOut = this.wasm._malloc(4);
+    this.wasm.ccall("wasm_mpc_ecdsa2p_key_get_Q", null, ["number", "number"], [keyRef, qOut]);
+    const qHandle = this.wasm.getValue(qOut, "*");
+    this.wasm._free(qOut);
     const qRef = this.wasm._malloc(4);
     this.wasm.setValue(qRef, qHandle, "*");
-    const qCmem = this.wasm.ccall("ecc_point_to_bytes", "number", ["number"], [qRef]) as number;
-    const qDataPtr = this.wasm.getValue(qCmem, "*");
-    const qSize = this.wasm.getValue(qCmem + 4, "i32");
-    const publicKey = readBytes(this.wasm, qDataPtr, qSize);
-    this.wasm._free(qDataPtr);
+    const publicKey = pointToSec1Uncompressed(this.wasm, qRef);
     this.wasm._free(qRef);
     // Free the point copy
     const freeRef = this.wasm._malloc(4);
     this.wasm.setValue(freeRef, qHandle, "*");
-    this.wasm.ccall("free_ecc_point", null, ["number"], [freeRef]);
+    this.wasm.ccall("wasm_free_ecc_point", null, ["number"], [freeRef]);
     this.wasm._free(freeRef);
 
     // Get x_share
-    const xCmem = this.wasm.ccall(
-      "mpc_ecdsa2p_key_get_x_share", "number", ["number"], [keyRef],
-    ) as number;
-    const xDataPtr = this.wasm.getValue(xCmem, "*");
-    const xSize = this.wasm.getValue(xCmem + 4, "i32");
+    const xCmemOut = this.wasm._malloc(8);
+    this.wasm.ccall("wasm_mpc_ecdsa2p_key_get_x_share", null, ["number", "number"], [keyRef, xCmemOut]);
+    const xDataPtr = this.wasm.getValue(xCmemOut, "*");
+    const xSize = this.wasm.getValue(xCmemOut + 4, "i32");
     const xShare = readBytes(this.wasm, xDataPtr, xSize);
     this.wasm._free(xDataPtr);
+    this.wasm._free(xCmemOut);
 
     this.wasm._free(keyRef);
 
@@ -766,7 +797,7 @@ export class CbMpc {
   freeEcdsa2pKey(key: Ecdsa2pKeyHandle): void {
     const refPtr = this.wasm._malloc(4);
     this.wasm.setValue(refPtr, key as unknown as number, "*");
-    this.wasm.ccall("free_mpc_ecdsa2p_key", null, ["number"], [refPtr]);
+    this.wasm.ccall("wasm_free_mpc_ecdsa2p_key", null, ["number"], [refPtr]);
     this.wasm._free(refPtr);
   }
 
@@ -902,19 +933,18 @@ export class CbMpc {
     const partyName = new TextDecoder().decode(nameData);
     freeCmem(this.wasm, nameCmem);
 
-    // Public key Q
-    const qHandle = this.wasm.ccall("mpc_eckey_mp_get_Q", "number", ["number"], [keyRef]) as number;
+    // Public key Q as SEC1 uncompressed format (04 || x || y)
+    const qOut = this.wasm._malloc(4);
+    this.wasm.ccall("wasm_mpc_eckey_mp_get_Q", null, ["number", "number"], [keyRef, qOut]);
+    const qHandle = this.wasm.getValue(qOut, "*");
+    this.wasm._free(qOut);
     const qRef = this.wasm._malloc(4);
     this.wasm.setValue(qRef, qHandle, "*");
-    const qCmem = this.wasm.ccall("ecc_point_to_bytes", "number", ["number"], [qRef]) as number;
-    const qDataPtr = this.wasm.getValue(qCmem, "*");
-    const qSize = this.wasm.getValue(qCmem + 4, "i32");
-    const publicKey = readBytes(this.wasm, qDataPtr, qSize);
-    this.wasm._free(qDataPtr);
+    const publicKey = pointToSec1Uncompressed(this.wasm, qRef);
     this.wasm._free(qRef);
     const freeRef = this.wasm._malloc(4);
     this.wasm.setValue(freeRef, qHandle, "*");
-    this.wasm.ccall("free_ecc_point", null, ["number"], [freeRef]);
+    this.wasm.ccall("wasm_free_ecc_point", null, ["number"], [freeRef]);
     this.wasm._free(freeRef);
 
     // x_share
@@ -965,7 +995,7 @@ export class CbMpc {
   freeEcKeyMp(key: EcKeyMpHandle): void {
     const refPtr = this.wasm._malloc(4);
     this.wasm.setValue(refPtr, key as unknown as number, "*");
-    this.wasm.ccall("free_mpc_eckey_mp", null, ["number"], [refPtr]);
+    this.wasm.ccall("wasm_free_mpc_eckey_mp", null, ["number"], [refPtr]);
     this.wasm._free(refPtr);
   }
 
