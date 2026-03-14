@@ -101,7 +101,9 @@ jobs:
           version: 3.1.51
 
       - name: Build OpenSSL for WASM
-        run: bash scripts/openssl/build-static-openssl-wasm.sh
+        run: |
+          sudo mkdir -p /usr/local/opt
+          sudo bash scripts/openssl/build-static-openssl-wasm.sh
 
       - name: Build WASM
         run: make build-wasm
