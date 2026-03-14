@@ -1,9 +1,9 @@
 {
   "name": "cb-mpc",
-  "version": "0.1.2",
+  "version": "0.1.3",
+  "type": "module",
   "description": "cb-mpc cryptographic MPC library compiled to WebAssembly",
   "main": "dist/index.js",
-  "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "files": [
     "dist/",
@@ -14,8 +14,7 @@
   ],
   "exports": {
     ".": {
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
+      "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
     "./cbmpc.js": "./cbmpc.js",
