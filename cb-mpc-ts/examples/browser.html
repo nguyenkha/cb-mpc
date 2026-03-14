@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cb-mpc Browser Demo</title>
+  <style>
+    body { font-family: monospace; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.4rem; }
+    button { font-family: monospace; padding: 0.5rem 1rem; cursor: pointer; font-size: 1rem; }
+    #output { white-space: pre-wrap; background: #f5f5f5; padding: 1rem; border-radius: 4px; margin-top: 1rem; min-height: 200px; }
+    .ok { color: green; }
+    .err { color: red; }
+  </style>
+</head>
+<body>
+  <h1>cb-mpc Browser Demo (WASM)</h1>
+  <p>Runs elliptic curve operations and two-party ECDSA entirely in the browser via WebAssembly.</p>
+  <button id="run-curve" onclick="runCurveOps()">Run Curve Ops</button>
+  <button id="run-ecdsa" onclick="runEcdsa2p()">Run ECDSA 2P (DKG + Sign)</button>
+  <pre id="output"></pre>
+
+  <script type="module">
+    // Import from the built dist/ directory
+    import { initCbMpc, NID_secp256k1, NID_X9_62_prime256v1 } from "../dist/index.js";
+
+    const output = document.getElementById("output");
+
+    function log(msg) {
+      output.textContent += msg + "\n";
+    }
+
+    function hexEncode(bytes) {
+      return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    // --- Curve Operations ---
+    window.runCurveOps = async function () {
+      output.textContent = "";
+      log("=== Elliptic Curve Operations ===\n");
+
+      try {
+        log("Loading WASM module...");
+        const mpc = await initCbMpc();
+        log("WASM loaded.\n");
+
+        // Curve creation
+        const secp256k1 = mpc.createCurve(NID_secp256k1);
+        const p256 = mpc.createCurve(NID_X9_62_prime256v1);
+
+        const order = mpc.curveOrder(secp256k1);
+        log("1. Curves");
+        log("   secp256k1 order: " + hexEncode(order));
+        log("   P-256 order:     " + hexEncode(mpc.curveOrder(p256)));
+        log("");
+
+        // Random scalars
+        log("2. Random scalars");
+        const s1 = mpc.randomScalar(secp256k1);
+        const s2 = mpc.randomScalar(secp256k1);
+        log("   s1: " + hexEncode(s1));
+        log("   s2: " + hexEncode(s2));
+        log("   Different: " + (hexEncode(s1) !== hexEncode(s2)));
+        log("");
+
+        // Point multiplication
+        log("3. Generator multiplication");
+        const P = mpc.mulGenerator(secp256k1, s1);
+        const Q = mpc.mulGenerator(secp256k1, s2);
+        const coords = mpc.pointCoordinates(P);
+        log("   P = s1 * G");
+        log("   P.x: " + hexEncode(coords.x));
+        log("   P.y: " + hexEncode(coords.y));
+        log("");
+
+        // Point arithmetic
+        log("4. Point addition");
+        const R = mpc.pointAdd(P, Q);
+        const sumScalar = mpc.ecModAdd(secp256k1, s1, s2);
+        const Rexpected = mpc.mulGenerator(secp256k1, sumScalar);
+        log("   P + Q == (s1+s2)*G: " + mpc.pointEquals(R, Rexpected));
+
+        const S = mpc.pointSubtract(R, Q);
+        log("   (P+Q) - Q == P:     " + mpc.pointEquals(S, P));
+        log("");
+
+        // Serialization round-trip
+        log("5. Point serialization");
+        const serialized = mpc.pointToBytes(P);
+        const deserialized = mpc.pointFromBytes(serialized);
+        log("   Serialized: " + serialized.length + " bytes");
+        log("   Round-trip matches: " + mpc.pointEquals(P, deserialized));
+        log("");
+
+        // Cleanup
+        mpc.freePoint(P);
+        mpc.freePoint(Q);
+        mpc.freePoint(R);
+        mpc.freePoint(Rexpected);
+        mpc.freePoint(S);
+        mpc.freePoint(deserialized);
+        mpc.freeCurve(secp256k1);
+        mpc.freeCurve(p256);
+
+        log("=== Done ===");
+      } catch (e) {
+        log("\nERROR: " + e.message);
+        console.error(e);
+      }
+    };
+
+    // --- ECDSA 2P (in-browser, both parties in same page) ---
+    window.runEcdsa2p = async function () {
+      output.textContent = "";
+      log("=== ECDSA Two-Party Demo (in-browser) ===\n");
+
+      try {
+        log("Loading two WASM modules (one per party)...");
+        const [mpc0, mpc1] = await Promise.all([initCbMpc(), initCbMpc()]);
+        log("WASM loaded.\n");
+
+        // In-memory transport for two parties
+        function createTransport() {
+          const queues = [[], []]; // queues[receiver][sender]
+          const waiters = [new Map(), new Map()];
+
+          function makeParty(partyIndex) {
+            return {
+              async send(receiver, message) {
+                const q = queues[receiver];
+                const w = waiters[receiver].get(partyIndex);
+                if (w) {
+                  waiters[receiver].delete(partyIndex);
+                  w(new Uint8Array(message));
+                } else {
+                  q.push({ from: partyIndex, data: new Uint8Array(message) });
+                }
+                return 0;
+              },
+              async receive(sender) {
+                const q = queues[partyIndex];
+                const idx = q.findIndex(m => m.from === sender);
+                if (idx >= 0) {
+                  return q.splice(idx, 1)[0].data;
+                }
+                return new Promise(resolve => {
+                  waiters[partyIndex].set(sender, resolve);
+                });
+              },
+              async receiveAll(senders) {
+                return Promise.all(senders.map(s => this.receive(s)));
+              },
+            };
+          }
+          return [makeParty(0), makeParty(1)];
+        }
+
+        const names = ["alice", "bob"];
+
+        // DKG
+        log("1. Distributed Key Generation...");
+        const t0 = performance.now();
+        const [transport0, transport1] = createTransport();
+        const [key0, key1] = await Promise.all([
+          mpc0.ecdsa2pDkg(transport0, 0, names, NID_secp256k1),
+          mpc1.ecdsa2pDkg(transport1, 1, names, NID_secp256k1),
+        ]);
+        const dkgTime = (performance.now() - t0).toFixed(0);
+
+        const info0 = mpc0.ecdsa2pKeyInfo(key0);
+        log("   Public key: " + hexEncode(info0.publicKey).slice(0, 40) + "...");
+        log("   DKG time: " + dkgTime + " ms");
+        log("");
+
+        // Signing
+        log("2. Collaborative Signing...");
+        const message = new TextEncoder().encode("Hello from the browser!");
+        const hashBuf = await crypto.subtle.digest("SHA-256", message);
+        const msgHash = new Uint8Array(hashBuf);
+        log("   Message: \"Hello from the browser!\"");
+        log("   Hash: " + hexEncode(msgHash));
+
+        const t1 = performance.now();
+        const [st0, st1] = createTransport();
+        const sessionId = crypto.getRandomValues(new Uint8Array(32));
+        const [sigs0, sigs1] = await Promise.all([
+          mpc0.ecdsa2pSign(st0, 0, names, key0, sessionId, [msgHash]),
+          mpc1.ecdsa2pSign(st1, 1, names, key1, sessionId, [msgHash]),
+        ]);
+        const signTime = (performance.now() - t1).toFixed(0);
+        const sig = sigs0[0].length > 0 ? sigs0[0] : sigs1[0];
+
+        log("   Signature: " + hexEncode(sig).slice(0, 40) + "...");
+        log("   Sign time: " + signTime + " ms");
+        log("");
+
+        // Verify
+        log("3. Verification...");
+        const valid = mpc0.verifyDer(NID_secp256k1, info0.publicKey, msgHash, sig);
+        log("   Signature valid: " + valid);
+        log("");
+
+        // Serialize / deserialize round-trip
+        log("4. Key Serialization...");
+        const parts = mpc0.serializeEcdsa2p(key0);
+        const totalBytes = parts.reduce((s, p) => s + p.length, 0);
+        log("   Serialized: " + parts.length + " parts, " + totalBytes + " bytes");
+
+        const restored = mpc0.deserializeEcdsa2p(parts);
+        const restoredInfo = mpc0.ecdsa2pKeyInfo(restored);
+        log("   Restored public key matches: " + (hexEncode(info0.publicKey) === hexEncode(restoredInfo.publicKey)));
+        mpc0.freeEcdsa2pKey(restored);
+        log("");
+
+        // Cleanup
+        mpc0.freeEcdsa2pKey(key0);
+        mpc1.freeEcdsa2pKey(key1);
+
+        log("=== Done ===");
+      } catch (e) {
+        log("\nERROR: " + e.message);
+        console.error(e);
+      }
+    };
+  </script>
+</body>
+</html>
