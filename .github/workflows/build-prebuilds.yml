@@ -102,8 +102,9 @@ jobs:
 
       - name: Build OpenSSL for WASM
         run: |
-          sudo mkdir -p /usr/local/opt
-          sudo bash scripts/openssl/build-static-openssl-wasm.sh
+          sudo mkdir -p /usr/local/opt/openssl@3.2.0-wasm
+          sudo chmod 777 /usr/local/opt/openssl@3.2.0-wasm
+          bash scripts/openssl/build-static-openssl-wasm.sh
 
       - name: Build WASM
         run: make build-wasm
