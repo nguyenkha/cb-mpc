@@ -91,6 +91,10 @@ const FFI_SYMBOLS = {
   mpc_eckey_mp_get_party_name: { args: ["ptr"] as const, returns: "ptr" as const },
   serialize_mpc_eckey_mp: { args: ["ptr", "ptr"] as const, returns: "i32" as const },
   deserialize_mpc_eckey_mp: { args: ["ptr", "i32", "ptr"] as const, returns: "i32" as const },
+  serialize_mpc_ecdsa2p: { args: ["ptr", "ptr"] as const, returns: "i32" as const },
+  deserialize_mpc_ecdsa2p: { args: ["ptr", "i32", "ptr"] as const, returns: "i32" as const },
+  serialize_mpc_eckey_2p: { args: ["ptr", "ptr"] as const, returns: "i32" as const },
+  deserialize_mpc_eckey_2p: { args: ["ptr", "i32", "ptr"] as const, returns: "i32" as const },
 
   // ECDSA MP
   mpc_ecdsampc_sign: { args: ["ptr", "ptr", "ptr", "i32", "i32", "ptr"] as const, returns: "i32" as const },

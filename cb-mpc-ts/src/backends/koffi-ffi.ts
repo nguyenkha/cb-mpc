@@ -99,6 +99,10 @@ class KoffiLib implements NativeLib {
     mpc_eckey_mp_get_party_name: "const char* mpc_eckey_mp_get_party_name(void* key)",
     serialize_mpc_eckey_mp: "int serialize_mpc_eckey_mp(void* key, void* cmems_out)",
     deserialize_mpc_eckey_mp: "int deserialize_mpc_eckey_mp(void* parts, int parts_count, void* key_out)",
+    serialize_mpc_ecdsa2p: "int serialize_mpc_ecdsa2p(void* key, void* cmems_out)",
+    deserialize_mpc_ecdsa2p: "int deserialize_mpc_ecdsa2p(void* parts, int parts_count, void* key_out)",
+    serialize_mpc_eckey_2p: "int serialize_mpc_eckey_2p(void* key, void* cmems_out)",
+    deserialize_mpc_eckey_2p: "int deserialize_mpc_eckey_2p(void* parts, int parts_count, void* key_out)",
 
     // ECDSA MP
     mpc_ecdsampc_sign: "int mpc_ecdsampc_sign(void* job, void* key, void* msg_hash, int msg_hash_size, int sig_receiver, void* sig_out)",

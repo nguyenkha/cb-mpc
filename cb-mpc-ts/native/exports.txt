@@ -82,6 +82,10 @@ _mpc_eckey_mp_get_x_share
 _mpc_eckey_mp_get_party_name
 _serialize_mpc_eckey_mp
 _deserialize_mpc_eckey_mp
+_serialize_mpc_ecdsa2p
+_deserialize_mpc_ecdsa2p
+_serialize_mpc_eckey_2p
+_deserialize_mpc_eckey_2p
 _mpc_ecdsampc_sign
 _mpc_eddsampc_sign
 _mpc_eckey_2p_dkg

@@ -35,6 +35,10 @@ cmem_t mpc_eckey_2p_get_x_share(mpc_eckey_2p_ref* key);
 int mpc_eckey_2p_get_role_index(mpc_eckey_2p_ref* key);
 int mpc_eckey_2p_get_curve_code(mpc_eckey_2p_ref* key);
 
+// Serialization
+int serialize_mpc_eckey_2p(mpc_eckey_2p_ref* k, cmems_t* ser);
+int deserialize_mpc_eckey_2p(cmems_t ser, mpc_eckey_2p_ref* k);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

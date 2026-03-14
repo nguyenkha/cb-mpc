@@ -586,6 +586,32 @@ export class CbMpc {
     this.mod.free(refPtr);
   }
 
+  serializeEcdsa2p(key: Ecdsa2pKeyHandle): Uint8Array[] {
+    const keyRef = this.mod.allocRef();
+    this.mod.setPointer(keyRef, key as unknown as number);
+    const cmemsSize = 4 + this.mod.POINTER_SIZE * 2;
+    const serCmems = this.mod.malloc(cmemsSize);
+
+    const err = this.mod.call("serialize_mpc_ecdsa2p", keyRef, serCmems);
+    const result = err === 0 ? this.mod.readCmems(serCmems) : [];
+    this.mod.freeCmems(serCmems);
+    this.mod.free(keyRef);
+    checkError(err, "serializeEcdsa2p");
+    return result;
+  }
+
+  deserializeEcdsa2p(data: Uint8Array[]): Ecdsa2pKeyHandle {
+    const serCmems = this.mod.writeCmems(data);
+    const keyRef = this.mod.allocRef();
+
+    const err = this.mod.call("deserialize_mpc_ecdsa2p", serCmems, keyRef);
+    const keyHandle = this.mod.readRef(keyRef) as unknown as Ecdsa2pKeyHandle;
+    this.mod.free(keyRef);
+    this.mod.freeCmems(serCmems);
+    checkError(err, "deserializeEcdsa2p");
+    return keyHandle;
+  }
+
   // =========================================================================
   // Schnorr Two-Party Protocol (EdDSA)
   // =========================================================================
@@ -677,6 +703,32 @@ export class CbMpc {
     this.mod.setPointer(refPtr, key as unknown as number);
     this.mod.call("wasm_free_mpc_eckey_2p", refPtr);
     this.mod.free(refPtr);
+  }
+
+  serializeEcKey2p(key: EcKey2pHandle): Uint8Array[] {
+    const keyRef = this.mod.allocRef();
+    this.mod.setPointer(keyRef, key as unknown as number);
+    const cmemsSize = 4 + this.mod.POINTER_SIZE * 2;
+    const serCmems = this.mod.malloc(cmemsSize);
+
+    const err = this.mod.call("serialize_mpc_eckey_2p", keyRef, serCmems);
+    const result = err === 0 ? this.mod.readCmems(serCmems) : [];
+    this.mod.freeCmems(serCmems);
+    this.mod.free(keyRef);
+    checkError(err, "serializeEcKey2p");
+    return result;
+  }
+
+  deserializeEcKey2p(data: Uint8Array[]): EcKey2pHandle {
+    const serCmems = this.mod.writeCmems(data);
+    const keyRef = this.mod.allocRef();
+
+    const err = this.mod.call("deserialize_mpc_eckey_2p", serCmems, keyRef);
+    const keyHandle = this.mod.readRef(keyRef) as unknown as EcKey2pHandle;
+    this.mod.free(keyRef);
+    this.mod.freeCmems(serCmems);
+    checkError(err, "deserializeEcKey2p");
+    return keyHandle;
   }
 
   // =========================================================================
