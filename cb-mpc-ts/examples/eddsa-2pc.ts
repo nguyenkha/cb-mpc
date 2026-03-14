@@ -117,7 +117,7 @@ async function verifyEd25519(
   message: Uint8Array,
   signature: Uint8Array,
 ): Promise<boolean> {
-  const crypto = await import("crypto");
+  const crypto = await import("node:crypto");
   const keyObj = crypto.createPublicKey({
     key: Buffer.concat([
       // Ed25519 PKCS8/SPKI DER prefix for 32-byte key

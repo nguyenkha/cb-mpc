@@ -21,8 +21,8 @@ function hexEncode(bytes: Uint8Array): string {
 }
 
 async function sha256(data: Uint8Array): Promise<Uint8Array> {
-  const { createHash } = await import("crypto");
-  return new Uint8Array(createHash("sha256").update(data).digest());
+  const buf = await crypto.subtle.digest("SHA-256", data as ArrayBufferView<ArrayBuffer>);
+  return new Uint8Array(buf);
 }
 
 // ---------------------------------------------------------------------------
