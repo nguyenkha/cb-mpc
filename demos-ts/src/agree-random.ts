@@ -5,7 +5,7 @@
  * party can bias. Both parties end up with the same random bytes.
  */
 
-import { initCbMpc } from "@aspect-build/cb-mpc-wasm";
+import { initCbMpc } from "cb-mpc";
 import { createMockNetwork } from "./mock-transport";
 
 const PARTY_NAMES: [string, string] = ["alice", "bob"];

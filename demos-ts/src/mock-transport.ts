@@ -6,7 +6,7 @@
  * the Go mocknet implementation in demos-go.
  */
 
-import type { DataTransport } from "@aspect-build/cb-mpc-wasm";
+import type { DataTransport } from "cb-mpc";
 
 /** A message in the mock network. */
 interface Message {

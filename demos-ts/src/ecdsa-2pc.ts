@@ -11,8 +11,8 @@
  * mock transport. In production, replace with WebSocket or HTTP transport.
  */
 
-import { initCbMpc, CbMpc, NID_secp256k1 } from "@aspect-build/cb-mpc-wasm";
-import type { Ecdsa2pKeyHandle } from "@aspect-build/cb-mpc-wasm";
+import { initCbMpc, CbMpc, NID_secp256k1 } from "cb-mpc";
+import type { Ecdsa2pKeyHandle } from "cb-mpc";
 import { createMockNetwork } from "./mock-transport";
 
 const PARTY_NAMES: [string, string] = ["alice", "bob"];

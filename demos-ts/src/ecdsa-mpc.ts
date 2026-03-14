@@ -9,8 +9,8 @@
  * All parties run concurrently through an in-memory mock transport.
  */
 
-import { initCbMpc, CbMpc, NID_secp256k1 } from "@aspect-build/cb-mpc-wasm";
-import type { CurveHandle, EcKeyMpHandle } from "@aspect-build/cb-mpc-wasm";
+import { initCbMpc, CbMpc, NID_secp256k1 } from "cb-mpc";
+import type { CurveHandle, EcKeyMpHandle } from "cb-mpc";
 import { createMockNetwork } from "./mock-transport";
 
 const N_PARTIES = 3;

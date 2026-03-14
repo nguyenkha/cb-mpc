@@ -10,7 +10,7 @@
  *   - Point serialization round-trips
  */
 
-import { initCbMpc, NID_secp256k1, NID_X9_62_prime256v1 } from "@aspect-build/cb-mpc-wasm";
+import { initCbMpc, NID_secp256k1, NID_X9_62_prime256v1 } from "cb-mpc";
 
 async function main() {
   console.log("=== Elliptic Curve Operations Demo ===\n");

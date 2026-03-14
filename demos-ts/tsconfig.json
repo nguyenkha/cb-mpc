@@ -12,8 +12,8 @@
     "resolveJsonModule": true,
     "declaration": false,
     "paths": {
-      "@aspect-build/cb-mpc-wasm": ["../wasm/dist/index"],
-      "@aspect-build/cb-mpc-wasm/*": ["../wasm/dist/*"]
+      "cb-mpc": ["../wasm/dist/index"],
+      "cb-mpc/*": ["../wasm/dist/*"]
     },
     "baseUrl": "."
   },
