@@ -117,8 +117,11 @@ class BunFfiLib implements NativeLib {
   private callbacks: any[] = [];
 
   constructor(libPath: string) {
+    // Use indirect require to prevent bundlers from resolving bun:ffi statically
+    const _require = typeof require !== "undefined" ? require : undefined;
+    if (!_require) throw new Error("bun:ffi requires the Bun runtime");
     // @ts-ignore - bun:ffi is Bun-only
-    const { dlopen, ptr: bunPtr, toArrayBuffer, CString, JSCallback } = require("bun:ffi");
+    const { dlopen, ptr: bunPtr, toArrayBuffer, CString, JSCallback } = _require("bun:ffi");
     const lib = dlopen(libPath, FFI_SYMBOLS);
     this.symbols = lib.symbols;
 

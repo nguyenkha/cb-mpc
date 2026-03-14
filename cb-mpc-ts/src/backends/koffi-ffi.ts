@@ -121,8 +121,10 @@ class KoffiLib implements NativeLib {
   };
 
   constructor(libPath: string) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    this.koffi = require("koffi");
+    // Use indirect require to prevent bundlers from resolving koffi statically
+    const _require = typeof require !== "undefined" ? require : undefined;
+    if (!_require) throw new Error("koffi requires a CommonJS environment (Node.js or Bun)");
+    this.koffi = _require("koffi");
     this.lib = this.koffi.load(libPath);
   }
 

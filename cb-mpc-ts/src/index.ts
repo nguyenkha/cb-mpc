@@ -96,7 +96,8 @@ export async function initCbMpcAuto(): Promise<CbMpc> {
   // Try koffi (Node.js or Bun with koffi installed)
   if (typeof process !== "undefined" && process.versions) {
     try {
-      require.resolve("koffi");
+      const _require = typeof require !== "undefined" ? require : undefined;
+      _require!.resolve("koffi");
       const mpc = await initCbMpcKoffi();
       debug("loaded koffi backend");
       return mpc;
