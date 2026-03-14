@@ -58,6 +58,7 @@ jobs:
 
       - name: Build OpenSSL
         run: |
+          sudo mkdir -p /usr/local/opt
           sudo bash ${{ matrix.openssl_script }}
 
       - name: Build native shared library
