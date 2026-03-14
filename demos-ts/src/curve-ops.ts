@@ -10,12 +10,12 @@
  *   - Point serialization round-trips
  */
 
-import { initCbMpc, NID_secp256k1, NID_X9_62_prime256v1 } from "cb-mpc";
+import { initCbMpcAuto, NID_secp256k1, NID_X9_62_prime256v1 } from "cb-mpc";
 
 async function main() {
   console.log("=== Elliptic Curve Operations Demo ===\n");
 
-  const mpc = await initCbMpc();
+  const mpc = await initCbMpcAuto();
 
   // --- Curve creation ---
   console.log("1. Curve parameters");

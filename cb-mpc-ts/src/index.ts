@@ -80,9 +80,11 @@ export async function initCbMpcAuto(): Promise<CbMpc> {
   // Check if running in Bun
   if (typeof globalThis !== "undefined" && (globalThis as any).Bun) {
     try {
-      return await initCbMpcBunFfi();
-    } catch {
-      // Fall through
+      const mpc = await initCbMpcBunFfi();
+      console.log("cb-mpc: loaded bun:ffi backend");
+      return mpc;
+    } catch (e) {
+      console.debug("cb-mpc: bun:ffi backend failed:", (e as Error).message);
     }
   }
 
@@ -90,14 +92,18 @@ export async function initCbMpcAuto(): Promise<CbMpc> {
   if (typeof process !== "undefined" && process.versions) {
     try {
       require.resolve("koffi");
-      return await initCbMpcKoffi();
+      const mpc = await initCbMpcKoffi();
+      console.log("cb-mpc: loaded koffi backend");
+      return mpc;
     } catch {
       // koffi not installed, fall through
     }
   }
 
   // Fallback to WASM
-  return await initCbMpc();
+  const mpc = await initCbMpc();
+  console.log("cb-mpc: loaded wasm backend");
+  return mpc;
 }
 
 // ---------------------------------------------------------------------------

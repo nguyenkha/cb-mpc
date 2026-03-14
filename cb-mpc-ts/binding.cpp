@@ -9,7 +9,7 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
-#define EXPORT EXPORT
+#define EXPORT EMSCRIPTEN_KEEPALIVE
 #else
 #define EXPORT __attribute__((visibility("default")))
 #endif

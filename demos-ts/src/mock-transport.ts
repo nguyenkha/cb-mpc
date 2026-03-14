@@ -55,6 +55,11 @@ class MockMessenger implements DataTransport {
     return 0;
   }
 
+  sendSync(receiver: number, message: Uint8Array): number {
+    this.network[receiver].enqueue(this.partyIndex, message);
+    return 0;
+  }
+
   async receive(sender: number): Promise<Uint8Array> {
     // Check if a message is already buffered.
     const queue = this.queues.get(sender);
@@ -68,8 +73,20 @@ class MockMessenger implements DataTransport {
     });
   }
 
+  receiveSync(sender: number): Uint8Array {
+    const queue = this.queues.get(sender);
+    if (queue && queue.length > 0) {
+      return queue.shift()!.data;
+    }
+    throw new Error(`No message buffered from sender ${sender}`);
+  }
+
   async receiveAll(senders: number[]): Promise<Uint8Array[]> {
     return Promise.all(senders.map((s) => this.receive(s)));
+  }
+
+  receiveAllSync(senders: number[]): Uint8Array[] {
+    return senders.map((s) => this.receiveSync(s));
   }
 }
 

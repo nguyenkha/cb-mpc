@@ -71,7 +71,15 @@ target_include_directories(cbmpc PRIVATE
   ${ROOT_DIR}/vendors
 )
 
+# Make CGO symbols visible (they lack __attribute__((visibility("default"))))
+set_source_files_properties(${CGO_SRCS} PROPERTIES
+  COMPILE_FLAGS "-fvisibility=default"
+)
+
 link_openssl(cbmpc)
+
+# Export list — make CGO symbols visible despite -fvisibility=hidden
+set(EXPORTS_FILE "${CMAKE_CURRENT_LIST_DIR}/exports.txt")
 
 # Set output name and platform-specific settings
 if(IS_MACOS)
@@ -80,12 +88,28 @@ if(IS_MACOS)
     SUFFIX ".dylib"
     INSTALL_RPATH "@loader_path"
   )
+  target_link_options(cbmpc PRIVATE "-Wl,-exported_symbols_list,${EXPORTS_FILE}")
 elseif(IS_LINUX)
+  # Generate a linker version script from the exports list
+  file(STRINGS "${EXPORTS_FILE}" _export_lines)
+  set(_version_script "{ global:\n")
+  foreach(_line ${_export_lines})
+    string(STRIP "${_line}" _line)
+    if(_line AND NOT _line MATCHES "^#")
+      # Remove leading underscore for ELF (no underscore prefix on Linux)
+      string(REGEX REPLACE "^_" "" _sym "${_line}")
+      string(APPEND _version_script "  ${_sym};\n")
+    endif()
+  endforeach()
+  string(APPEND _version_script "  local: *;\n};\n")
+  file(WRITE "${CMAKE_BINARY_DIR}/exports.map" "${_version_script}")
+
   set_target_properties(cbmpc PROPERTIES
     OUTPUT_NAME "cbmpc"
     SUFFIX ".so"
     INSTALL_RPATH "$ORIGIN"
   )
+  target_link_options(cbmpc PRIVATE "-Wl,--version-script=${CMAKE_BINARY_DIR}/exports.map")
 endif()
 
 # Install to cb-mpc-ts/prebuilds/<platform>-<arch>/

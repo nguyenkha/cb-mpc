@@ -1,0 +1,92 @@
+# Symbols exported from libcbmpc native shared library.
+# Used by the linker to make these visible despite -fvisibility=hidden.
+
+# Platform info (binding.cpp)
+_native_pointer_size
+_native_cmem_size
+_native_ref_size
+_native_register_transport
+
+# Memory (binding.cpp)
+_wasm_alloc
+_wasm_free
+_wasm_new_cmem
+_wasm_free_cmem
+_wasm_cmem_data
+_wasm_cmem_size
+_wasm_cmems_count
+_wasm_cmems_get
+_wasm_seed_random
+
+# Curve (binding.cpp)
+_wasm_new_ecurve
+_wasm_free_ecurve
+_wasm_ecurve_generator
+_wasm_ecurve_order
+_wasm_ecurve_random_scalar
+_wasm_ecurve_mul_generator
+
+# Point (binding.cpp)
+_wasm_free_ecc_point
+_wasm_ecc_point_from_bytes
+_wasm_ecc_point_to_bytes
+_wasm_ecc_point_multiply
+_wasm_ecc_point_add
+_wasm_ecc_point_subtract
+_wasm_ecc_point_get_x
+_wasm_ecc_point_get_y
+
+# Scalar (binding.cpp)
+_wasm_bn_add
+_wasm_ec_mod_add
+_wasm_bn_from_int64
+
+# Verification (binding.cpp)
+_wasm_ecc_verify_der
+
+# Key accessors (binding.cpp)
+_wasm_mpc_ecdsa2p_key_get_Q
+_wasm_mpc_ecdsa2p_key_get_x_share
+_wasm_free_mpc_ecdsa2p_key
+_wasm_mpc_eckey_mp_get_Q
+_wasm_free_mpc_eckey_mp
+_wasm_free_mpc_eckey_2p
+_wasm_mpc_eckey_2p_get_Q
+_wasm_mpc_eckey_2p_get_x_share
+_wasm_mpc_schnorr2p_eddsa_sign
+
+# Job (binding.cpp)
+_wasm_new_job_2p
+_wasm_new_job_mp
+
+# CGO functions (cgobinding/*.cpp)
+_ecurve_get_curve_code
+_ecc_point_is_zero
+_ecc_point_equals
+_free_job_2p
+_free_job_mp
+_is_peer1
+_is_peer2
+_get_role_index
+_get_party_idx
+_get_n_parties
+_mpc_ecdsa2p_dkg
+_mpc_ecdsa2p_refresh
+_mpc_ecdsa2p_sign
+_mpc_ecdsa2p_key_get_role_index
+_mpc_ecdsa2p_key_get_curve_code
+_mpc_eckey_mp_dkg
+_mpc_eckey_mp_refresh
+_mpc_eckey_mp_get_curve
+_mpc_eckey_mp_get_x_share
+_mpc_eckey_mp_get_party_name
+_serialize_mpc_eckey_mp
+_deserialize_mpc_eckey_mp
+_mpc_ecdsampc_sign
+_mpc_eddsampc_sign
+_mpc_eckey_2p_dkg
+_mpc_eckey_2p_get_role_index
+_mpc_eckey_2p_get_curve_code
+_mpc_agree_random
+_zk_dl_prove
+_zk_dl_verify
