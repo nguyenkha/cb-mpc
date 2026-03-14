@@ -3,6 +3,8 @@ name: Build Native Prebuilds
 on:
   push:
     branches: [master]
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
     paths:
       - "cb-mpc-ts/**"
       - "src/**"
@@ -173,3 +175,37 @@ jobs:
             cb-mpc-ts/README.md
             cb-mpc-ts/LICENSE
           retention-days: 90
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    name: Publish to npm
+    needs: [build-typescript]
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.12.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download package artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cb-mpc-package
+          path: cb-mpc-ts
+
+      - name: Publish to npm
+        working-directory: cb-mpc-ts
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
