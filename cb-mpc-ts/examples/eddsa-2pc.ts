@@ -13,8 +13,8 @@
  * suspended async call stack per module at a time.
  */
 
-import { initCbMpc, CbMpc, NID_ED25519 } from "cb-mpc";
-import type { PointHandle } from "cb-mpc";
+import { initCbMpc, CbMpc, NID_ED25519 } from "../dist/index";
+import type { PointHandle } from "../dist/index";
 import { createMockNetwork } from "./mock-transport";
 
 const PARTY_NAMES: [string, string] = ["alice", "bob"];

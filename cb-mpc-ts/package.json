@@ -9,7 +9,8 @@
     "dist/",
     "cbmpc.js",
     "cbmpc.wasm",
-    "prebuilds/"
+    "prebuilds/",
+    "examples/"
   ],
   "exports": {
     ".": {
@@ -22,7 +23,14 @@
   },
   "scripts": {
     "build:types": "tsc",
-    "build": "tsc"
+    "build": "tsc",
+    "demo:curve-ops": "bun run examples/curve-ops.ts",
+    "demo:ecdsa-2pc": "bun run examples/ecdsa-2pc.ts",
+    "demo:ecdsa-mpc": "bun run examples/ecdsa-mpc.ts",
+    "demo:eddsa-2pc": "bun run examples/eddsa-2pc.ts",
+    "demo:eddsa-mpc": "bun run examples/eddsa-mpc.ts",
+    "demo:agree-random": "bun run examples/agree-random.ts",
+    "demo:bun-ffi": "bun run examples/bun-ffi-demo.ts"
   },
   "devDependencies": {
     "@types/debug": "^4.1.12",

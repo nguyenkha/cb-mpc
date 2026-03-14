@@ -10,7 +10,7 @@
  *   - Point serialization round-trips
  */
 
-import { initCbMpcAuto, NID_secp256k1, NID_X9_62_prime256v1 } from "cb-mpc";
+import { initCbMpcAuto, NID_secp256k1, NID_X9_62_prime256v1 } from "../dist/index";
 
 async function main() {
   console.log("=== Elliptic Curve Operations Demo ===\n");

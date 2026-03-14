@@ -8,7 +8,7 @@
  * only supports one suspended async call stack per WASM module.
  */
 
-import { initCbMpc } from "cb-mpc";
+import { initCbMpc } from "../dist/index";
 import { createMockNetwork } from "./mock-transport";
 
 const PARTY_NAMES: [string, string] = ["alice", "bob"];

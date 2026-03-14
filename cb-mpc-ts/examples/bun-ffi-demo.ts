@@ -17,7 +17,7 @@ import {
   NID_secp256k1,
   NID_X9_62_prime256v1,
   NID_ED25519,
-} from "cb-mpc";
+} from "../dist/index";
 
 function hex(bytes: Uint8Array): string {
   return Array.from(bytes)

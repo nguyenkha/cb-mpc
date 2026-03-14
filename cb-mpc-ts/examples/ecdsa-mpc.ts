@@ -13,8 +13,8 @@
  * suspended async call stack per module at a time.
  */
 
-import { initCbMpc, CbMpc, NID_secp256k1 } from "cb-mpc";
-import type { EcKeyMpHandle, PointHandle } from "cb-mpc";
+import { initCbMpc, CbMpc, NID_secp256k1 } from "../dist/index";
+import type { EcKeyMpHandle, PointHandle } from "../dist/index";
 import { createMockNetwork } from "./mock-transport";
 
 const N_PARTIES = 3;
