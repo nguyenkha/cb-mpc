@@ -7,8 +7,8 @@
  * Install: npm install koffi
  */
 
-import type { NativeLib } from "./native";
-import { NativeBackend, getLibraryPath } from "./native";
+import type { NativeLib } from "./native.js";
+import { NativeBackend, getLibraryPath } from "./native.js";
 
 class KoffiLib implements NativeLib {
   private lib: any;

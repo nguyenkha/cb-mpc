@@ -9,8 +9,8 @@
  * protocol execution, use worker threads with each party in its own thread.
  */
 
-import type { CbMpcModule } from "../module";
-import type { DataTransport } from "../types";
+import type { CbMpcModule } from "../module.js";
+import type { DataTransport } from "../types.js";
 import { resolve, join } from "node:path";
 
 // ---------------------------------------------------------------------------

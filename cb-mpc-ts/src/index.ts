@@ -12,7 +12,7 @@
  */
 
 import createDebug from "debug";
-import type { CbMpcModule } from "./module";
+import type { CbMpcModule } from "./module.js";
 
 const debug = createDebug("cb-mpc");
 import type {
@@ -27,10 +27,10 @@ import type {
   EcKeyMpInfo,
   EcPoint,
   CbMpcWasmModule,
-} from "./types";
+} from "./types.js";
 
-export type { CbMpcModule } from "./module";
-export * from "./types";
+export type { CbMpcModule } from "./module.js";
+export * from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Module initialization
@@ -45,7 +45,7 @@ export * from "./types";
 export async function initCbMpc(
   wasmModuleFactory?: (opts?: object) => Promise<CbMpcWasmModule>,
 ): Promise<CbMpc> {
-  const { createWasmBackend } = await import("./backends/wasm");
+  const { createWasmBackend } = await import("./backends/wasm.js");
   const backend = await createWasmBackend(wasmModuleFactory);
   return new CbMpc(backend);
 }
@@ -56,7 +56,7 @@ export async function initCbMpc(
  * @param libPath - Optional path to the shared library. Auto-detected if omitted.
  */
 export async function initCbMpcBunFfi(libPath?: string): Promise<CbMpc> {
-  const { createBunFfiBackend } = await import("./backends/bun-ffi");
+  const { createBunFfiBackend } = await import("./backends/bun-ffi.js");
   const backend = await createBunFfiBackend(libPath);
   return new CbMpc(backend);
 }
@@ -69,7 +69,7 @@ export async function initCbMpcBunFfi(libPath?: string): Promise<CbMpc> {
  * @param libPath - Optional path to the shared library. Auto-detected if omitted.
  */
 export async function initCbMpcKoffi(libPath?: string): Promise<CbMpc> {
-  const { createKoffiBackend } = await import("./backends/koffi-ffi");
+  const { createKoffiBackend } = await import("./backends/koffi-ffi.js");
   const backend = await createKoffiBackend(libPath);
   return new CbMpc(backend);
 }

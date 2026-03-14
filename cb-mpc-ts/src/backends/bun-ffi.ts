@@ -5,8 +5,8 @@
  * Only works in the Bun runtime.
  */
 
-import type { NativeLib } from "./native";
-import { NativeBackend, getLibraryPath } from "./native";
+import type { NativeLib } from "./native.js";
+import { NativeBackend, getLibraryPath } from "./native.js";
 
 // All exported C functions and their signatures for bun:ffi
 const FFI_SYMBOLS = {

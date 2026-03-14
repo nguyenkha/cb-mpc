@@ -5,7 +5,7 @@
  * allowing it to work with WASM (Emscripten), bun:ffi, or koffi backends.
  */
 
-import type { DataTransport } from "./types";
+import type { DataTransport } from "./types.js";
 
 /**
  * Low-level module interface that backends must implement.

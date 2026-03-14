@@ -4,8 +4,8 @@
  * Wraps the Emscripten-generated module to implement the CbMpcModule interface.
  */
 
-import type { CbMpcModule } from "../module";
-import type { CbMpcWasmModule, DataTransport } from "../types";
+import type { CbMpcModule } from "../module.js";
+import type { CbMpcWasmModule, DataTransport } from "../types.js";
 
 export class WasmBackend implements CbMpcModule {
   readonly POINTER_SIZE = 4;
