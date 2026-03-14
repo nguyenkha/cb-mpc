@@ -13,10 +13,12 @@ import type {
   Job2pHandle,
   JobMpHandle,
   Ecdsa2pKeyHandle,
+  EcKey2pHandle,
   EcKeyMpHandle,
   PartySetHandle,
   DataTransport,
   Ecdsa2pKeyInfo,
+  EcKey2pInfo,
   EcKeyMpInfo,
   EcPoint,
 } from "./types";
@@ -128,10 +130,14 @@ function pointToSec1Uncompressed(wasm: CbMpcWasmModule, pointRef: number): Uint8
   const y = readCmem(wasm, yCmem);
   freeCmem(wasm, xCmem);
   freeCmem(wasm, yCmem);
-  const result = new Uint8Array(1 + x.length + y.length);
+  // Coordinate size is determined by the larger of x/y (handles leading-zero truncation).
+  // For 256-bit curves (secp256k1, P-256, Ed25519) this is 32 bytes.
+  const coordSize = Math.max(x.length, y.length);
+  const result = new Uint8Array(1 + coordSize * 2);
   result[0] = 0x04; // uncompressed point prefix
-  result.set(x, 1);
-  result.set(y, 1 + x.length);
+  // Left-pad coordinates with zeros to fixed size (big-endian)
+  result.set(x, 1 + coordSize - x.length);
+  result.set(y, 1 + coordSize + coordSize - y.length);
   return result;
 }
 
@@ -793,11 +799,197 @@ export class CbMpc {
     return { roleIndex, curveCode, publicKey, xShare };
   }
 
+  /**
+   * Reconstruct the full private key from additive key shares.
+   * Computes x = sum(xShares) mod q (additive secret sharing).
+   *
+   * Works for both 2-party and multi-party keys. Accepts raw shares
+   * because each party's key handle lives in a separate WASM instance.
+   * @returns The reconstructed private key scalar as big-endian bytes.
+   */
+  reconstructKey(curveCode: number, xShares: Uint8Array[]): Uint8Array {
+    if (xShares.length < 2) throw new Error("Need at least 2 shares");
+    const curve = this.createCurve(curveCode);
+    try {
+      let result = xShares[0];
+      for (let i = 1; i < xShares.length; i++) {
+        result = this.ecModAdd(curve, result, xShares[i]);
+      }
+      return result;
+    } finally {
+      this.freeCurve(curve);
+    }
+  }
+
   /** Free a two-party ECDSA key handle. */
   freeEcdsa2pKey(key: Ecdsa2pKeyHandle): void {
     const refPtr = this.wasm._malloc(4);
     this.wasm.setValue(refPtr, key as unknown as number, "*");
     this.wasm.ccall("wasm_free_mpc_ecdsa2p_key", null, ["number"], [refPtr]);
+    this.wasm._free(refPtr);
+  }
+
+  // =========================================================================
+  // Schnorr Two-Party Protocol (EdDSA)
+  // =========================================================================
+
+  /**
+   * Two-party EC distributed key generation (for Schnorr 2P).
+   *
+   * @param transport  - Network transport for message passing.
+   * @param partyIndex - This party's index (0 or 1).
+   * @param partyNames - Names for both parties [party0Name, party1Name].
+   * @param curveCode  - OpenSSL NID for the curve (e.g., NID_ED25519).
+   * @returns Handle to the generated key share. Caller must free with {@link freeEcKey2p}.
+   */
+  async ecKey2pDkg(
+    transport: DataTransport,
+    partyIndex: number,
+    partyNames: [string, string],
+    curveCode: number,
+  ): Promise<EcKey2pHandle> {
+    const transportId = this.registerTransport(transport);
+    const name0 = writeCString(this.wasm, partyNames[0]);
+    const name1 = writeCString(this.wasm, partyNames[1]);
+
+    try {
+      const jobPtr = this.wasm.ccall(
+        "wasm_new_job_2p",
+        "number",
+        ["number", "number", "number", "number"],
+        [transportId, partyIndex, name0, name1],
+      ) as number;
+
+      if (!jobPtr) throw new CbMpcError(-1, "ecKey2pDkg: failed to create job");
+
+      const keyRef = allocRef(this.wasm);
+      const err = await this.wasm.ccall(
+        "mpc_eckey_2p_dkg",
+        "number",
+        ["number", "number", "number"],
+        [jobPtr, curveCode, keyRef],
+        { async: true },
+      ) as number;
+
+      const keyHandle = readRef(this.wasm, keyRef) as unknown as EcKey2pHandle;
+      this.wasm._free(keyRef);
+      this.wasm.ccall("free_job_2p", null, ["number"], [jobPtr]);
+
+      checkError(err, "ecKey2pDkg");
+      return keyHandle;
+    } finally {
+      this.wasm._free(name0);
+      this.wasm._free(name1);
+      this.unregisterTransport(transportId);
+    }
+  }
+
+  /**
+   * Two-party Schnorr EdDSA signing.
+   *
+   * @param transport  - Network transport for message passing.
+   * @param partyIndex - This party's index (0 or 1).
+   * @param partyNames - Names for both parties.
+   * @param key        - Key handle from ecKey2pDkg.
+   * @param message    - Message to sign (raw bytes, not hashed).
+   * @returns EdDSA signature bytes (64 bytes). Only party 0 (p1) receives the signature.
+   */
+  async schnorr2pEddsaSign(
+    transport: DataTransport,
+    partyIndex: number,
+    partyNames: [string, string],
+    key: EcKey2pHandle,
+    message: Uint8Array,
+  ): Promise<Uint8Array> {
+    const transportId = this.registerTransport(transport);
+    const name0 = writeCString(this.wasm, partyNames[0]);
+    const name1 = writeCString(this.wasm, partyNames[1]);
+
+    try {
+      const jobPtr = this.wasm.ccall(
+        "wasm_new_job_2p",
+        "number",
+        ["number", "number", "number", "number"],
+        [transportId, partyIndex, name0, name1],
+      ) as number;
+
+      if (!jobPtr) throw new CbMpcError(-1, "schnorr2pEddsaSign: failed to create job");
+
+      const keyRef = this.wasm._malloc(4);
+      this.wasm.setValue(keyRef, key as unknown as number, "*");
+      const msgPtr = writeBytes(this.wasm, message);
+      const sigCmem = this.wasm._malloc(8);
+
+      const err = await this.wasm.ccall(
+        "wasm_mpc_schnorr2p_eddsa_sign",
+        "number",
+        ["number", "number", "number", "number", "number"],
+        [jobPtr, keyRef, msgPtr, message.length, sigCmem],
+        { async: true },
+      ) as number;
+
+      const sig = err === 0 ? readCmem(this.wasm, sigCmem) : new Uint8Array(0);
+
+      this.wasm._free(keyRef);
+      this.wasm._free(msgPtr);
+      freeCmem(this.wasm, sigCmem);
+      this.wasm.ccall("free_job_2p", null, ["number"], [jobPtr]);
+
+      checkError(err, "schnorr2pEddsaSign");
+      return sig;
+    } finally {
+      this.wasm._free(name0);
+      this.wasm._free(name1);
+      this.unregisterTransport(transportId);
+    }
+  }
+
+  /** Get key information from a two-party EC key handle. */
+  ecKey2pInfo(key: EcKey2pHandle): EcKey2pInfo {
+    const keyRef = this.wasm._malloc(4);
+    this.wasm.setValue(keyRef, key as unknown as number, "*");
+
+    const roleIndex = this.wasm.ccall(
+      "mpc_eckey_2p_get_role_index", "number", ["number"], [keyRef],
+    ) as number;
+
+    const curveCode = this.wasm.ccall(
+      "mpc_eckey_2p_get_curve_code", "number", ["number"], [keyRef],
+    ) as number;
+
+    // Get public key Q as SEC1 uncompressed format (04 || x || y)
+    const qOut = this.wasm._malloc(4);
+    this.wasm.ccall("wasm_mpc_eckey_2p_get_Q", null, ["number", "number"], [keyRef, qOut]);
+    const qHandle = this.wasm.getValue(qOut, "*");
+    this.wasm._free(qOut);
+    const qRef = this.wasm._malloc(4);
+    this.wasm.setValue(qRef, qHandle, "*");
+    const publicKey = pointToSec1Uncompressed(this.wasm, qRef);
+    this.wasm._free(qRef);
+    const freeRef = this.wasm._malloc(4);
+    this.wasm.setValue(freeRef, qHandle, "*");
+    this.wasm.ccall("wasm_free_ecc_point", null, ["number"], [freeRef]);
+    this.wasm._free(freeRef);
+
+    // Get x_share
+    const xCmemOut = this.wasm._malloc(8);
+    this.wasm.ccall("wasm_mpc_eckey_2p_get_x_share", null, ["number", "number"], [keyRef, xCmemOut]);
+    const xDataPtr = this.wasm.getValue(xCmemOut, "*");
+    const xSize = this.wasm.getValue(xCmemOut + 4, "i32");
+    const xShare = readBytes(this.wasm, xDataPtr, xSize);
+    this.wasm._free(xDataPtr);
+    this.wasm._free(xCmemOut);
+
+    this.wasm._free(keyRef);
+
+    return { roleIndex, curveCode, publicKey, xShare };
+  }
+
+  /** Free a two-party EC key handle. */
+  freeEcKey2p(key: EcKey2pHandle): void {
+    const refPtr = this.wasm._malloc(4);
+    this.wasm.setValue(refPtr, key as unknown as number, "*");
+    this.wasm.ccall("wasm_free_mpc_eckey_2p", null, ["number"], [refPtr]);
     this.wasm._free(refPtr);
   }
 

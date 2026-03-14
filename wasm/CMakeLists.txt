@@ -62,6 +62,7 @@ set(CGO_SRCS
   ${CGO_DIR}/eddsamp.cpp
   ${CGO_DIR}/network.cpp
   ${CGO_DIR}/pve.cpp
+  ${CGO_DIR}/schnorr2p.cpp
   ${CGO_DIR}/zk.cpp
 )
 
@@ -173,6 +174,14 @@ set(EXPORTED_FUNCTIONS
   "_mpc_ecdsampc_sign"
   # EdDSA MP
   "_mpc_eddsampc_sign"
+  # Schnorr 2P / EC Key 2P
+  "_mpc_eckey_2p_dkg"
+  "_wasm_free_mpc_eckey_2p"
+  "_mpc_eckey_2p_get_role_index"
+  "_mpc_eckey_2p_get_curve_code"
+  "_wasm_mpc_eckey_2p_get_Q"
+  "_wasm_mpc_eckey_2p_get_x_share"
+  "_wasm_mpc_schnorr2p_eddsa_sign"
   # ZK
   "_zk_dl_prove"
   "_zk_dl_verify"

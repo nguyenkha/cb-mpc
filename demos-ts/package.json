@@ -9,7 +9,9 @@
     "demo:ecdsa-2pc": "node dist/ecdsa-2pc.js",
     "demo:ecdsa-mpc": "node dist/ecdsa-mpc.js",
     "demo:agree-random": "node dist/agree-random.js",
-    "demo:all": "npm run build && npm run demo:curve-ops && npm run demo:ecdsa-2pc && npm run demo:ecdsa-mpc && npm run demo:agree-random"
+    "demo:eddsa-mpc": "node dist/eddsa-mpc.js",
+    "demo:eddsa-2pc": "node dist/eddsa-2pc.js",
+    "demo:all": "npm run build && npm run demo:curve-ops && npm run demo:ecdsa-2pc && npm run demo:ecdsa-mpc && npm run demo:agree-random && npm run demo:eddsa-mpc && npm run demo:eddsa-2pc"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

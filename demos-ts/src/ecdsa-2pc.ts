@@ -74,6 +74,23 @@ async function main() {
   console.log(`   Signature valid: ${valid2}`);
   console.log();
 
+  // --- Step 5: Reconstruct private key from shares ---
+  console.log("5. Reconstructing private key from shares...");
+  const info0 = mpc0.ecdsa2pKeyInfo(newKeys[0]);
+  const info1 = mpc1.ecdsa2pKeyInfo(newKeys[1]);
+  const privateKey = mpc0.reconstructKey(NID_secp256k1, [info0.xShare, info1.xShare]);
+  console.log(`   Private key (${privateKey.length} bytes): ${hexEncode(privateKey).slice(0, 16)}...`);
+
+  // Verify: x * G should equal the public key Q
+  const curve = mpc0.createCurve(NID_secp256k1);
+  const derivedQ = mpc0.mulGenerator(curve, privateKey);
+  const derivedPub = toSec1Uncompressed(mpc0, derivedQ, 32);
+  const keysMatch = hexEncode(derivedPub) === hexEncode(info0.publicKey);
+  console.log(`   x * G == Q: ${keysMatch}`);
+  mpc0.freePoint(derivedQ);
+  mpc0.freeCurve(curve);
+  console.log();
+
   // --- Cleanup ---
   mpc0.freeEcdsa2pKey(keys[0]);
   mpc1.freeEcdsa2pKey(keys[1]);
@@ -138,6 +155,17 @@ async function runRefresh(
 }
 
 // --- Utility functions ---
+
+/** Build SEC1 uncompressed format (04 || x || y) from a point handle. */
+function toSec1Uncompressed(mpc: CbMpc, point: import("cb-mpc").PointHandle, coordSize: number): Uint8Array {
+  const x = mpc.pointGetX(point);
+  const y = mpc.pointGetY(point);
+  const result = new Uint8Array(1 + coordSize * 2);
+  result[0] = 0x04;
+  result.set(x, 1 + coordSize - x.length);
+  result.set(y, 1 + coordSize + coordSize - y.length);
+  return result;
+}
 
 function hexEncode(bytes: Uint8Array): string {
   return Array.from(bytes)

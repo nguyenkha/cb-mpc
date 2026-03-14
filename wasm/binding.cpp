@@ -49,6 +49,7 @@ int getentropy(void* buffer, size_t length) {
 #include "eddsamp.h"
 #include "network.h"
 #include "pve.h"
+#include "schnorr2p.h"
 #include "zk.h"
 
 // ---------------------------------------------------------------------------
@@ -375,6 +376,31 @@ int wasm_ecc_verify_der(int curve_code,
 EMSCRIPTEN_KEEPALIVE
 void wasm_mpc_eckey_mp_get_Q(mpc_eckey_mp_ref* key, ecc_point_ref* out) {
   *out = mpc_eckey_mp_get_Q(key);
+}
+
+// -- EC Key 2P / Schnorr 2P wrappers --
+
+EMSCRIPTEN_KEEPALIVE
+void wasm_free_mpc_eckey_2p(mpc_eckey_2p_ref* ref) {
+  free_mpc_eckey_2p(*ref);
+}
+
+EMSCRIPTEN_KEEPALIVE
+void wasm_mpc_eckey_2p_get_Q(mpc_eckey_2p_ref* key, ecc_point_ref* out) {
+  *out = mpc_eckey_2p_get_Q(key);
+}
+
+EMSCRIPTEN_KEEPALIVE
+void wasm_mpc_eckey_2p_get_x_share(mpc_eckey_2p_ref* key, cmem_t* out) {
+  *out = mpc_eckey_2p_get_x_share(key);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_mpc_schnorr2p_eddsa_sign(job_2p_ref* job, mpc_eckey_2p_ref* key,
+                                   uint8_t* msg_data, int msg_size,
+                                   cmem_t* sig_out) {
+  cmem_t msg = {msg_data, msg_size};
+  return mpc_schnorr2p_eddsa_sign(job, key, msg, sig_out);
 }
 
 }  // extern "C"

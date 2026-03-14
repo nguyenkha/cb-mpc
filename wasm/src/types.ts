@@ -24,6 +24,9 @@ export type JobMpHandle = number & { readonly __brand: "JobMpHandle" };
 /** Opaque pointer to a two-party ECDSA key. */
 export type Ecdsa2pKeyHandle = number & { readonly __brand: "Ecdsa2pKeyHandle" };
 
+/** Opaque pointer to a two-party EC key (used by Schnorr 2P). */
+export type EcKey2pHandle = number & { readonly __brand: "EcKey2pHandle" };
+
 /** Opaque pointer to a multi-party EC key. */
 export type EcKeyMpHandle = number & { readonly __brand: "EcKeyMpHandle" };
 
@@ -113,6 +116,18 @@ export interface DataTransport {
 
 /** Two-party ECDSA key information. */
 export interface Ecdsa2pKeyInfo {
+  /** Party role index (0 or 1). */
+  roleIndex: number;
+  /** OpenSSL NID for the curve. */
+  curveCode: number;
+  /** Serialized public key point Q. */
+  publicKey: Uint8Array;
+  /** Secret share x_i (big-endian bytes). */
+  xShare: Uint8Array;
+}
+
+/** Two-party EC key information (Schnorr 2P). */
+export interface EcKey2pInfo {
   /** Party role index (0 or 1). */
   roleIndex: number;
   /** OpenSSL NID for the curve. */

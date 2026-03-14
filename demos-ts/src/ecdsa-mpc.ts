@@ -14,7 +14,7 @@
  */
 
 import { initCbMpc, CbMpc, NID_secp256k1 } from "cb-mpc";
-import type { EcKeyMpHandle } from "cb-mpc";
+import type { EcKeyMpHandle, PointHandle } from "cb-mpc";
 import { createMockNetwork } from "./mock-transport";
 
 const N_PARTIES = 3;
@@ -102,6 +102,19 @@ async function main() {
   mpcs[0].freeEcKeyMp(deserialized);
   console.log();
 
+  // --- Step 6: Reconstruct private key from shares ---
+  console.log("6. Reconstructing private key from shares...");
+  const privateKey = mpcs[0].reconstructKey(NID_secp256k1, newInfos.map((info) => info.xShare));
+  console.log(`   Private key (${privateKey.length} bytes): ${hexEncode(privateKey).slice(0, 16)}...`);
+
+  // Verify: x * G should equal the public key Q
+  const derivedQ = mpcs[0].mulGenerator(curve, privateKey);
+  const derivedPub = toSec1Uncompressed(mpcs[0], derivedQ, 32);
+  const keysMatch = hexEncode(derivedPub) === hexEncode(newInfos[0].publicKey);
+  console.log(`   x * G == Q: ${keysMatch}`);
+  mpcs[0].freePoint(derivedQ);
+  console.log();
+
   // --- Cleanup ---
   for (let i = 0; i < N_PARTIES; i++) {
     mpcs[i].freeEcKeyMp(keys[i]);
@@ -166,6 +179,17 @@ async function runMpRefresh(mpcs: CbMpc[], keys: EcKeyMpHandle[]): Promise<EcKey
 }
 
 // --- Utilities ---
+
+/** Build SEC1 uncompressed format (04 || x || y) from a point handle. */
+function toSec1Uncompressed(mpc: CbMpc, point: PointHandle, coordSize: number): Uint8Array {
+  const x = mpc.pointGetX(point);
+  const y = mpc.pointGetY(point);
+  const result = new Uint8Array(1 + coordSize * 2);
+  result[0] = 0x04;
+  result.set(x, 1 + coordSize - x.length);
+  result.set(y, 1 + coordSize + coordSize - y.length);
+  return result;
+}
 
 function hexEncode(bytes: Uint8Array): string {
   return Array.from(bytes)
