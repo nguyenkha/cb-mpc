@@ -28,7 +28,7 @@ cb-mpc-ts/cbmpc.js
 cb-mpc-ts/cbmpc.wasm
 cb-mpc-ts/dist/
 cb-mpc-ts/node_modules/
+cb-mpc-ts/src/*.js
 
-# TypeScript demo build artifacts
-demos-ts/dist/
-demos-ts/node_modules/
+# macOS
+.DS_Store
