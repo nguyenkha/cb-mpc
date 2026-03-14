@@ -1,10 +1,19 @@
-// WASM binding layer for cb-mpc.
+// Binding layer for cb-mpc.
 //
-// This file bridges the C API (from cgobinding/) to Emscripten/WASM,
-// providing memory helpers and a callback-based data transport that
-// delegates to JavaScript send/receive functions via ASYNCIFY.
+// This file bridges the C API (from cgobinding/) to JavaScript runtimes.
+// It supports two build modes:
+//   1. WASM (Emscripten): uses ASYNCIFY for async JS transport callbacks
+//   2. Native shared library (.dylib/.so): loaded via FFI (koffi)
+//
+// The native build uses function-pointer registration instead of EM_ASYNC_JS.
 
+#ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#define EXPORT EXPORT
+#else
+#define EXPORT __attribute__((visibility("default")))
+#endif
+
 #include <openssl/rand.h>
 
 #include <cstdlib>
@@ -13,15 +22,14 @@
 #include <cbmpc/core/cmem.h>
 
 // ---------------------------------------------------------------------------
-// Provide getentropy() for OpenSSL's DRBG seeding in WASM.
-//
-// Emscripten may not provide getentropy() when FILESYSTEM=0. We implement it
-// by calling into JavaScript's crypto.getRandomValues(), which is available
-// in all modern browsers and Node.js.
+// Entropy seeding
 // ---------------------------------------------------------------------------
 
+#ifdef __EMSCRIPTEN__
+// Emscripten may not provide getentropy() when FILESYSTEM=0. We implement it
+// by calling into JavaScript's crypto.getRandomValues().
+
 EM_JS(int, js_get_random_values, (uint8_t* buf, int size), {
-  // Use globalThis.crypto which works in both browsers and Node.js 19+
   if (typeof globalThis !== "undefined" && globalThis.crypto && globalThis.crypto.getRandomValues) {
     globalThis.crypto.getRandomValues(Module.HEAPU8.subarray(buf, buf + size));
     return 0;
@@ -32,12 +40,12 @@ EM_JS(int, js_get_random_values, (uint8_t* buf, int size), {
 extern "C" {
 int getentropy(void* buffer, size_t length) {
   if (length > 256) {
-    // POSIX getentropy() limit
     return -1;
   }
   return js_get_random_values(static_cast<uint8_t*>(buffer), static_cast<int>(length));
 }
 }
+#endif // __EMSCRIPTEN__
 
 // Pull in the CGO C headers so their symbols are linked.
 #include "ac.h"
@@ -53,12 +61,11 @@ int getentropy(void* buffer, size_t length) {
 #include "zk.h"
 
 // ---------------------------------------------------------------------------
-// JS-side transport callbacks (implemented in JavaScript, called via ASYNCIFY)
+// Transport callbacks
 // ---------------------------------------------------------------------------
 
-// These are defined in JavaScript and invoked synchronously from C++ thanks to
-// Emscripten ASYNCIFY.  The JS implementations can be async (e.g. fetching
-// from a WebSocket) and ASYNCIFY will transparently pause/resume the WASM stack.
+#ifdef __EMSCRIPTEN__
+// WASM: JS-side transport callbacks invoked via ASYNCIFY
 
 EM_ASYNC_JS(int, js_transport_send, (int transport_id, int receiver, const uint8_t* data, int size), {
   const cb = Module._transportCallbacks ? Module._transportCallbacks[transport_id] : null;
@@ -95,7 +102,6 @@ EM_ASYNC_JS(int, js_transport_receive_all,
   const messages = await cb.receiveAll(senderArr);
   if (!messages || !Array.isArray(messages)) return -1;
 
-  // Flatten messages into a single buffer with size array
   let totalSize = 0;
   for (const m of messages) totalSize += m.length;
 
@@ -113,12 +119,6 @@ EM_ASYNC_JS(int, js_transport_receive_all,
   Module.setValue(out_count, messages.length, 'i32');
   return 0;
 });
-
-// ---------------------------------------------------------------------------
-// C callback trampolines for data_transport_callbacks_t
-// ---------------------------------------------------------------------------
-
-// The void* go_impl_ptr carries the transport_id (cast to intptr_t).
 
 static int send_trampoline(void* ctx, int receiver, cmem_t message) {
   int transport_id = static_cast<int>(reinterpret_cast<intptr_t>(ctx));
@@ -155,15 +155,98 @@ static const data_transport_callbacks_t wasm_callbacks = {
     receive_all_trampoline,
 };
 
+#else
+// Native: transport callbacks are registered via function pointers from JS FFI.
+// The FFI layer registers send/receive/receiveAll function pointers per transport_id.
+
+// Function pointer types matching the transport callback signatures.
+typedef int (*native_send_fn)(int transport_id, int receiver, const uint8_t* data, int size);
+typedef int (*native_receive_fn)(int transport_id, int sender, uint8_t** out_data, int* out_size);
+typedef int (*native_receive_all_fn)(int transport_id, const int* senders, int sender_count,
+                                      uint8_t** out_data, int** out_sizes, int* out_count);
+
+// Global function pointers set by JS before protocol calls.
+static native_send_fn g_native_send = nullptr;
+static native_receive_fn g_native_receive = nullptr;
+static native_receive_all_fn g_native_receive_all = nullptr;
+
+static int native_send_trampoline(void* ctx, int receiver, cmem_t message) {
+  if (!g_native_send) return -1;
+  int transport_id = static_cast<int>(reinterpret_cast<intptr_t>(ctx));
+  return g_native_send(transport_id, receiver, message.data, message.size);
+}
+
+static int native_receive_trampoline(void* ctx, int sender, cmem_t* message) {
+  if (!g_native_receive) return -1;
+  int transport_id = static_cast<int>(reinterpret_cast<intptr_t>(ctx));
+  uint8_t* data = nullptr;
+  int size = 0;
+  int rc = g_native_receive(transport_id, sender, &data, &size);
+  if (rc != 0) return rc;
+  message->data = data;
+  message->size = size;
+  return 0;
+}
+
+static int native_receive_all_trampoline(void* ctx, int* senders, int sender_count, cmems_t* messages) {
+  if (!g_native_receive_all) return -1;
+  int transport_id = static_cast<int>(reinterpret_cast<intptr_t>(ctx));
+  uint8_t* data = nullptr;
+  int* sizes = nullptr;
+  int count = 0;
+  int rc = g_native_receive_all(transport_id, senders, sender_count, &data, &sizes, &count);
+  if (rc != 0) return rc;
+  messages->data = data;
+  messages->sizes = sizes;
+  messages->count = count;
+  return 0;
+}
+
+static const data_transport_callbacks_t native_callbacks = {
+    native_send_trampoline,
+    native_receive_trampoline,
+    native_receive_all_trampoline,
+};
+#endif // __EMSCRIPTEN__
+
 // ---------------------------------------------------------------------------
 // WASM-exported helpers
 // ---------------------------------------------------------------------------
 
 extern "C" {
 
-// -- Entropy seeding (WASM has no native entropy source) --
+// -- Platform info (struct sizes for FFI) --
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
+int native_pointer_size() { return static_cast<int>(sizeof(void*)); }
+
+EXPORT
+int native_cmem_size() { return static_cast<int>(sizeof(cmem_t)); }
+
+EXPORT
+int native_ref_size() { return static_cast<int>(sizeof(ecurve_ref)); }
+
+// -- cmem_t write helper (for FFI: allocate and populate a cmem_t) --
+
+EXPORT
+cmem_t* wasm_new_cmem(uint8_t* data, int size) {
+  cmem_t* cmem = static_cast<cmem_t*>(malloc(sizeof(cmem_t)));
+  cmem->data = data;
+  cmem->size = size;
+  return cmem;
+}
+
+EXPORT
+void wasm_free_cmem(cmem_t* cmem) {
+  if (cmem) {
+    if (cmem->data) free(cmem->data);
+    free(cmem);
+  }
+}
+
+// -- Entropy seeding --
+
+EXPORT
 int wasm_seed_random(const uint8_t* data, int size) {
   RAND_seed(data, size);
   return RAND_status();
@@ -171,35 +254,35 @@ int wasm_seed_random(const uint8_t* data, int size) {
 
 // -- Memory allocation helpers for JS interop --
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 uint8_t* wasm_alloc(int size) {
   return static_cast<uint8_t*>(malloc(size));
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_free(void* ptr) {
   free(ptr);
 }
 
 // -- cmem_t accessors (JS can't dereference structs directly) --
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 uint8_t* wasm_cmem_data(cmem_t* cmem) {
   return cmem ? cmem->data : nullptr;
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 int wasm_cmem_size(cmem_t* cmem) {
   return cmem ? cmem->size : 0;
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 int wasm_cmems_count(cmems_t* cmems) {
   return cmems ? cmems->count : 0;
 }
 
 // Extract the i-th element from a cmems_t into a cmem_t (written to out).
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 int wasm_cmems_get(cmems_t* cmems, int index, cmem_t* out) {
   if (!cmems || !out || index < 0 || index >= cmems->count) return -1;
   const uint8_t* p = cmems->data;
@@ -211,21 +294,40 @@ int wasm_cmems_get(cmems_t* cmems, int index, cmem_t* out) {
   return 0;
 }
 
-// -- Job creation wrappers (using wasm transport callbacks) --
+// -- Transport callback registration (native only) --
 
-EMSCRIPTEN_KEEPALIVE
+#ifndef __EMSCRIPTEN__
+EXPORT
+void native_register_transport(native_send_fn send_fn, native_receive_fn recv_fn, native_receive_all_fn recv_all_fn) {
+  g_native_send = send_fn;
+  g_native_receive = recv_fn;
+  g_native_receive_all = recv_all_fn;
+}
+#endif
+
+// -- Job creation wrappers --
+
+EXPORT
 job_2p_ref* wasm_new_job_2p(int transport_id, int party_index,
                             const char* pname0, const char* pname1) {
   const char* pnames[2] = {pname0, pname1};
   void* ctx = reinterpret_cast<void*>(static_cast<intptr_t>(transport_id));
+#ifdef __EMSCRIPTEN__
   return new_job_2p(&wasm_callbacks, ctx, party_index, pnames, 2);
+#else
+  return new_job_2p(&native_callbacks, ctx, party_index, pnames, 2);
+#endif
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 job_mp_ref* wasm_new_job_mp(int transport_id, int party_count, int party_index,
                             const char** pnames, int pname_count) {
   void* ctx = reinterpret_cast<void*>(static_cast<intptr_t>(transport_id));
+#ifdef __EMSCRIPTEN__
   return new_job_mp(&wasm_callbacks, ctx, party_count, party_index, pnames, pname_count);
+#else
+  return new_job_mp(&native_callbacks, ctx, party_count, party_index, pnames, pname_count);
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -238,49 +340,49 @@ job_mp_ref* wasm_new_job_mp(int transport_id, int party_count, int party_index,
 
 // -- Free wrappers (original funcs take structs by value) --
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_free_ecurve(ecurve_ref* ref) {
   free_ecurve(*ref);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_free_ecc_point(ecc_point_ref* ref) {
   free_ecc_point(*ref);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_free_mpc_ecdsa2p_key(mpc_ecdsa2pc_key_ref* ref) {
   free_mpc_ecdsa2p_key(*ref);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_free_mpc_eckey_mp(mpc_eckey_mp_ref* ref) {
   free_mpc_eckey_mp(*ref);
 }
 
 // -- Curve wrappers --
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_new_ecurve(int curve_code, ecurve_ref* out) {
   *out = new_ecurve(curve_code);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_ecurve_generator(ecurve_ref* curve, ecc_point_ref* out) {
   *out = ecurve_generator(curve);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_ecurve_order(ecurve_ref* curve, cmem_t* out) {
   *out = ecurve_order(curve);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_ecurve_random_scalar(ecurve_ref* curve, cmem_t* out) {
   *out = ecurve_random_scalar(curve);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_ecurve_mul_generator(ecurve_ref* curve, uint8_t* s_data, int s_size, ecc_point_ref* out) {
   cmem_t scalar = {s_data, s_size};
   *out = ecurve_mul_generator(curve, scalar);
@@ -288,79 +390,79 @@ void wasm_ecurve_mul_generator(ecurve_ref* curve, uint8_t* s_data, int s_size, e
 
 // -- Point wrappers --
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_ecc_point_from_bytes(uint8_t* data, int size, ecc_point_ref* out) {
   cmem_t point_bytes = {data, size};
   *out = ecc_point_from_bytes(point_bytes);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_ecc_point_to_bytes(ecc_point_ref* point, cmem_t* out) {
   *out = ecc_point_to_bytes(point);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_ecc_point_multiply(ecc_point_ref* point, uint8_t* s_data, int s_size, ecc_point_ref* out) {
   cmem_t scalar = {s_data, s_size};
   *out = ecc_point_multiply(point, scalar);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_ecc_point_add(ecc_point_ref* p1, ecc_point_ref* p2, ecc_point_ref* out) {
   *out = ecc_point_add(p1, p2);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_ecc_point_subtract(ecc_point_ref* p1, ecc_point_ref* p2, ecc_point_ref* out) {
   *out = ecc_point_subtract(p1, p2);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_ecc_point_get_x(ecc_point_ref* point, cmem_t* out) {
   *out = ecc_point_get_x(point);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_ecc_point_get_y(ecc_point_ref* point, cmem_t* out) {
   *out = ecc_point_get_y(point);
 }
 
 // -- Scalar wrappers --
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_bn_add(uint8_t* a_data, int a_size, uint8_t* b_data, int b_size, cmem_t* out) {
   cmem_t a = {a_data, a_size};
   cmem_t b = {b_data, b_size};
   *out = bn_add(a, b);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_ec_mod_add(ecurve_ref* curve, uint8_t* a_data, int a_size, uint8_t* b_data, int b_size, cmem_t* out) {
   cmem_t a = {a_data, a_size};
   cmem_t b = {b_data, b_size};
   *out = ec_mod_add(curve, a, b);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_bn_from_int64(int64_t value, cmem_t* out) {
   *out = bn_from_int64(value);
 }
 
 // -- ECDSA 2P wrappers --
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_mpc_ecdsa2p_key_get_Q(mpc_ecdsa2pc_key_ref* key, ecc_point_ref* out) {
   *out = mpc_ecdsa2p_key_get_Q(key);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_mpc_ecdsa2p_key_get_x_share(mpc_ecdsa2pc_key_ref* key, cmem_t* out) {
   *out = mpc_ecdsa2p_key_get_x_share(key);
 }
 
 // -- Verification wrapper --
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 int wasm_ecc_verify_der(int curve_code,
                         uint8_t* pub_data, int pub_size,
                         uint8_t* hash_data, int hash_size,
@@ -373,29 +475,29 @@ int wasm_ecc_verify_der(int curve_code,
 
 // -- EC Key MP wrappers --
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_mpc_eckey_mp_get_Q(mpc_eckey_mp_ref* key, ecc_point_ref* out) {
   *out = mpc_eckey_mp_get_Q(key);
 }
 
 // -- EC Key 2P / Schnorr 2P wrappers --
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_free_mpc_eckey_2p(mpc_eckey_2p_ref* ref) {
   free_mpc_eckey_2p(*ref);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_mpc_eckey_2p_get_Q(mpc_eckey_2p_ref* key, ecc_point_ref* out) {
   *out = mpc_eckey_2p_get_Q(key);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 void wasm_mpc_eckey_2p_get_x_share(mpc_eckey_2p_ref* key, cmem_t* out) {
   *out = mpc_eckey_2p_get_x_share(key);
 }
 
-EMSCRIPTEN_KEEPALIVE
+EXPORT
 int wasm_mpc_schnorr2p_eddsa_sign(job_2p_ref* job, mpc_eckey_2p_ref* key,
                                    uint8_t* msg_data, int msg_size,
                                    cmem_t* sig_out) {

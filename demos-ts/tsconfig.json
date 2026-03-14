@@ -12,8 +12,8 @@
     "resolveJsonModule": true,
     "declaration": false,
     "paths": {
-      "cb-mpc": ["../wasm/dist/index"],
-      "cb-mpc/*": ["../wasm/dist/*"]
+      "cb-mpc": ["../cb-mpc-ts/dist/index"],
+      "cb-mpc/*": ["../cb-mpc-ts/dist/*"]
     },
     "baseUrl": "."
   },

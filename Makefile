@@ -81,18 +81,18 @@ openssl-wasm:
 build-wasm:
 	@echo "Building cb-mpc for WebAssembly..."
 	@command -v emcmake >/dev/null 2>&1 || { echo "Error: Emscripten not found. Run 'source emsdk_env.sh' first."; exit 1; }
-	emcmake cmake -B build/wasm -S wasm \
+	emcmake cmake -B build/wasm -S cb-mpc-ts \
 		-DCMAKE_BUILD_TYPE=Release
 	emmake cmake --build build/wasm -- -j$(CMAKE_NCORES)
-	@cp build/wasm/cbmpc.js wasm/cbmpc.js
-	@cp build/wasm/cbmpc.wasm wasm/cbmpc.wasm
-	@echo "WASM build output: wasm/cbmpc.js, wasm/cbmpc.wasm"
+	@cp build/wasm/cbmpc.js cb-mpc-ts/cbmpc.js
+	@cp build/wasm/cbmpc.wasm cb-mpc-ts/cbmpc.wasm
+	@echo "WASM build output: cb-mpc-ts/cbmpc.js, cb-mpc-ts/cbmpc.wasm"
 
 .PHONY: build-wasm-types
 build-wasm-types:
 	@echo "Building TypeScript declarations..."
-	cd wasm && npm install && npm run build:types
-	@echo "TypeScript types output: wasm/dist/"
+	cd cb-mpc-ts && npm install && npm run build:types
+	@echo "TypeScript types output: cb-mpc-ts/dist/"
 
 .PHONY: wasm
 wasm: openssl-wasm build-wasm build-wasm-types
@@ -101,8 +101,37 @@ wasm: openssl-wasm build-wasm build-wasm-types
 .PHONY: clean-wasm
 clean-wasm:
 	rm -rf build/wasm
-	rm -f wasm/cbmpc.js wasm/cbmpc.wasm
-	rm -rf wasm/dist wasm/node_modules
+	rm -f cb-mpc-ts/cbmpc.js cb-mpc-ts/cbmpc.wasm
+	rm -rf cb-mpc-ts/dist cb-mpc-ts/node_modules
+
+# ------------- Native shared library (for FFI) --------------------------------
+
+.PHONY: build-native
+build-native:
+	@echo "Building cb-mpc native shared library..."
+	cmake -B build/native -S cb-mpc-ts/native -DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+		-DCMAKE_OSX_ARCHITECTURES=$(shell uname -m)
+	cmake --build build/native -- -j$(CMAKE_NCORES)
+	@echo "Native build complete. Output in cb-mpc-ts/prebuilds/"
+
+.PHONY: build-native-linux-x64
+build-native-linux-x64:
+	@echo "Building cb-mpc native shared library for Linux x64 (Docker)..."
+	docker run --rm --platform linux/amd64 -v $(shell pwd):/code -t $(DOCKER_IMAGE_NAME) bash -c '\
+		cmake -B build/native-linux -S cb-mpc-ts/native \
+			-DCMAKE_BUILD_TYPE=Release && \
+		cmake --build build/native-linux -- -j$$(nproc)'
+	@echo "Linux x64 build complete. Output in cb-mpc-ts/prebuilds/linux-x64/"
+
+.PHONY: native
+native: openssl build-native
+	@echo "Native build complete."
+
+.PHONY: clean-native
+clean-native:
+	rm -rf build/native build/native-linux
+	rm -rf cb-mpc-ts/prebuilds
 
 .PHONY: docker-run
 docker-run:

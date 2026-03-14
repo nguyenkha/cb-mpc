@@ -1,0 +1,175 @@
+name: Build Native Prebuilds
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "cb-mpc-ts/**"
+      - "src/**"
+      - "demos-go/cb-mpc-go/internal/cgobinding/**"
+      - "cmake/**"
+      - "scripts/openssl/**"
+      - ".github/workflows/build-prebuilds.yml"
+  pull_request:
+    paths:
+      - "cb-mpc-ts/**"
+      - "src/**"
+      - "demos-go/cb-mpc-go/internal/cgobinding/**"
+      - "cmake/**"
+      - "scripts/openssl/**"
+      - ".github/workflows/build-prebuilds.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-native:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            openssl_script: scripts/openssl/build-static-openssl-linux.sh
+          - os: macos-14
+            platform: darwin-arm64
+            openssl_script: scripts/openssl/build-static-openssl-macos-m1.sh
+
+    runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.platform }}
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.12.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake clang
+
+      - name: Build OpenSSL
+        run: |
+          sudo bash ${{ matrix.openssl_script }}
+
+      - name: Build native shared library
+        run: |
+          cmake -B build/native -S cb-mpc-ts/native \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_OSX_ARCHITECTURES=$(uname -m)
+          cmake --build build/native -- -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+
+      - name: Verify output
+        run: |
+          ls -lh cb-mpc-ts/prebuilds/${{ matrix.platform }}/
+          file cb-mpc-ts/prebuilds/${{ matrix.platform }}/libcbmpc.*
+
+      - name: Upload prebuild artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prebuild-${{ matrix.platform }}
+          path: cb-mpc-ts/prebuilds/${{ matrix.platform }}/
+          retention-days: 90
+
+  build-wasm:
+    runs-on: ubuntu-latest
+    name: Build WASM
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.12.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+        with:
+          version: 3.1.51
+
+      - name: Build OpenSSL for WASM
+        run: bash scripts/openssl/build-static-openssl-wasm.sh
+
+      - name: Build WASM
+        run: make build-wasm
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wasm-build
+          path: |
+            cb-mpc-ts/cbmpc.js
+            cb-mpc-ts/cbmpc.wasm
+          retention-days: 90
+
+  build-typescript:
+    runs-on: ubuntu-latest
+    name: Build TypeScript
+    needs: [build-native, build-wasm]
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.12.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts
+
+      - name: Assemble package
+        run: |
+          # Copy WASM build
+          cp artifacts/wasm-build/cbmpc.js cb-mpc-ts/cbmpc.js
+          cp artifacts/wasm-build/cbmpc.wasm cb-mpc-ts/cbmpc.wasm
+
+          # Copy prebuilds
+          mkdir -p cb-mpc-ts/prebuilds
+          for dir in artifacts/prebuild-*/; do
+            platform=$(basename "$dir" | sed 's/prebuild-//')
+            mkdir -p "cb-mpc-ts/prebuilds/$platform"
+            cp "$dir"/* "cb-mpc-ts/prebuilds/$platform/"
+          done
+
+          # Build TypeScript
+          cd cb-mpc-ts
+          npm install
+          npm run build
+
+          # Show package contents
+          echo "=== Package contents ==="
+          find dist/ prebuilds/ cbmpc.js cbmpc.wasm -type f | head -20
+          echo "=== Sizes ==="
+          du -sh dist/ prebuilds/ cbmpc.js cbmpc.wasm
+
+      - name: Upload full package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cb-mpc-package
+          path: |
+            cb-mpc-ts/dist/
+            cb-mpc-ts/prebuilds/
+            cb-mpc-ts/cbmpc.js
+            cb-mpc-ts/cbmpc.wasm
+            cb-mpc-ts/package.json
+            cb-mpc-ts/README.md
+            cb-mpc-ts/LICENSE
+          retention-days: 90
