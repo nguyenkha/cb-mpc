@@ -25,6 +25,7 @@
     "build": "tsc"
   },
   "devDependencies": {
+    "@types/debug": "^4.1.12",
     "@types/node": "^25.5.0",
     "typescript": "^5.4.0"
   },
@@ -41,5 +42,8 @@
     "wasm",
     "webassembly",
     "threshold-signatures"
-  ]
+  ],
+  "dependencies": {
+    "debug": "^4.4.3"
+  }
 }

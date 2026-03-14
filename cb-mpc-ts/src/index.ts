@@ -11,7 +11,10 @@
  * backend-agnostic — it works with any CbMpcModule implementation.
  */
 
+import createDebug from "debug";
 import type { CbMpcModule } from "./module";
+
+const debug = createDebug("cb-mpc");
 import type {
   CurveHandle,
   PointHandle,
@@ -81,10 +84,10 @@ export async function initCbMpcAuto(): Promise<CbMpc> {
   if (typeof globalThis !== "undefined" && (globalThis as any).Bun) {
     try {
       const mpc = await initCbMpcBunFfi();
-      console.log("cb-mpc: loaded bun:ffi backend");
+      debug("loaded bun:ffi backend");
       return mpc;
     } catch (e) {
-      console.debug("cb-mpc: bun:ffi backend failed:", (e as Error).message);
+      debug("bun:ffi backend failed: %s", (e as Error).message);
     }
   }
 
@@ -93,7 +96,7 @@ export async function initCbMpcAuto(): Promise<CbMpc> {
     try {
       require.resolve("koffi");
       const mpc = await initCbMpcKoffi();
-      console.log("cb-mpc: loaded koffi backend");
+      debug("loaded koffi backend");
       return mpc;
     } catch {
       // koffi not installed, fall through
@@ -102,7 +105,7 @@ export async function initCbMpcAuto(): Promise<CbMpc> {
 
   // Fallback to WASM
   const mpc = await initCbMpc();
-  console.log("cb-mpc: loaded wasm backend");
+  debug("loaded wasm backend");
   return mpc;
 }
 
