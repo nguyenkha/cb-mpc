@@ -160,20 +160,16 @@ export class CbMpc {
   /** @internal */
   constructor(private readonly mod: CbMpcModule) {}
 
-  /** Call a value-returning wrapper that reports failure as a non-zero status. */
-  private callChecked(name: string, ...args: number[]): void {
-    checkError(this.mod.call(name, ...args) as number, name);
-  }
-
   // =========================================================================
   // Curve operations
   // =========================================================================
 
   createCurve(curveCode: number): CurveHandle {
     const outPtr = this.mod.allocRef();
-    this.callChecked("wasm_new_ecurve", curveCode, outPtr);
+    const status = this.mod.call("wasm_new_ecurve", curveCode, outPtr) as number;
     const handle = this.mod.readRef(outPtr);
     this.mod.free(outPtr);
+    checkError(status, "wasm_new_ecurve");
     return handle as unknown as CurveHandle;
   }
 
@@ -188,10 +184,11 @@ export class CbMpc {
     const curveRef = this.mod.allocRef();
     this.mod.setPointer(curveRef, curve as unknown as number);
     const outPtr = this.mod.allocRef();
-    this.callChecked("wasm_ecurve_generator", curveRef, outPtr);
+    const status = this.mod.call("wasm_ecurve_generator", curveRef, outPtr) as number;
     const handle = this.mod.readRef(outPtr);
     this.mod.free(curveRef);
     this.mod.free(outPtr);
+    checkError(status, "wasm_ecurve_generator");
     return handle as unknown as PointHandle;
   }
 
@@ -199,10 +196,11 @@ export class CbMpc {
     const curveRef = this.mod.allocRef();
     this.mod.setPointer(curveRef, curve as unknown as number);
     const cmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.callChecked("wasm_ecurve_order", curveRef, cmemOut);
+    const status = this.mod.call("wasm_ecurve_order", curveRef, cmemOut) as number;
     const result = this.mod.readCmem(cmemOut);
     this.mod.freeCmem(cmemOut);
     this.mod.free(curveRef);
+    checkError(status, "wasm_ecurve_order");
     return result;
   }
 
@@ -218,10 +216,11 @@ export class CbMpc {
     const curveRef = this.mod.allocRef();
     this.mod.setPointer(curveRef, curve as unknown as number);
     const cmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.callChecked("wasm_ecurve_random_scalar", curveRef, cmemOut);
+    const status = this.mod.call("wasm_ecurve_random_scalar", curveRef, cmemOut) as number;
     const result = this.mod.readCmem(cmemOut);
     this.mod.freeCmem(cmemOut);
     this.mod.free(curveRef);
+    checkError(status, "wasm_ecurve_random_scalar");
     return result;
   }
 
@@ -232,10 +231,11 @@ export class CbMpc {
   pointFromBytes(data: Uint8Array): PointHandle {
     const dataPtr = this.mod.writeBytes(data);
     const outPtr = this.mod.allocRef();
-    this.callChecked("wasm_ecc_point_from_bytes", dataPtr, data.length, outPtr);
+    const status = this.mod.call("wasm_ecc_point_from_bytes", dataPtr, data.length, outPtr) as number;
     const handle = this.mod.readRef(outPtr);
     this.mod.free(outPtr);
     this.mod.free(dataPtr);
+    checkError(status, "wasm_ecc_point_from_bytes");
     return handle as unknown as PointHandle;
   }
 
@@ -243,10 +243,11 @@ export class CbMpc {
     const refPtr = this.mod.allocRef();
     this.mod.setPointer(refPtr, point as unknown as number);
     const cmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.callChecked("wasm_ecc_point_to_bytes", refPtr, cmemOut);
+    const status = this.mod.call("wasm_ecc_point_to_bytes", refPtr, cmemOut) as number;
     const result = this.mod.readCmem(cmemOut);
     this.mod.freeCmem(cmemOut);
     this.mod.free(refPtr);
+    checkError(status, "wasm_ecc_point_to_bytes");
     return result;
   }
 
@@ -254,10 +255,11 @@ export class CbMpc {
     const refPtr = this.mod.allocRef();
     this.mod.setPointer(refPtr, point as unknown as number);
     const cmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.callChecked("wasm_ecc_point_get_x", refPtr, cmemOut);
+    const status = this.mod.call("wasm_ecc_point_get_x", refPtr, cmemOut) as number;
     const result = this.mod.readCmem(cmemOut);
     this.mod.freeCmem(cmemOut);
     this.mod.free(refPtr);
+    checkError(status, "wasm_ecc_point_get_x");
     return result;
   }
 
@@ -265,10 +267,11 @@ export class CbMpc {
     const refPtr = this.mod.allocRef();
     this.mod.setPointer(refPtr, point as unknown as number);
     const cmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.callChecked("wasm_ecc_point_get_y", refPtr, cmemOut);
+    const status = this.mod.call("wasm_ecc_point_get_y", refPtr, cmemOut) as number;
     const result = this.mod.readCmem(cmemOut);
     this.mod.freeCmem(cmemOut);
     this.mod.free(refPtr);
+    checkError(status, "wasm_ecc_point_get_y");
     return result;
   }
 
@@ -281,11 +284,12 @@ export class CbMpc {
     this.mod.setPointer(refPtr, point as unknown as number);
     const sPtr = this.mod.writeBytes(scalar);
     const outPtr = this.mod.allocRef();
-    this.callChecked("wasm_ecc_point_multiply", refPtr, sPtr, scalar.length, outPtr);
+    const status = this.mod.call("wasm_ecc_point_multiply", refPtr, sPtr, scalar.length, outPtr) as number;
     const handle = this.mod.readRef(outPtr);
     this.mod.free(refPtr);
     this.mod.free(sPtr);
     this.mod.free(outPtr);
+    checkError(status, "wasm_ecc_point_multiply");
     return handle as unknown as PointHandle;
   }
 
@@ -295,11 +299,12 @@ export class CbMpc {
     this.mod.setPointer(ref1, p1 as unknown as number);
     this.mod.setPointer(ref2, p2 as unknown as number);
     const outPtr = this.mod.allocRef();
-    this.callChecked("wasm_ecc_point_add", ref1, ref2, outPtr);
+    const status = this.mod.call("wasm_ecc_point_add", ref1, ref2, outPtr) as number;
     const handle = this.mod.readRef(outPtr);
     this.mod.free(ref1);
     this.mod.free(ref2);
     this.mod.free(outPtr);
+    checkError(status, "wasm_ecc_point_add");
     return handle as unknown as PointHandle;
   }
 
@@ -309,11 +314,12 @@ export class CbMpc {
     this.mod.setPointer(ref1, p1 as unknown as number);
     this.mod.setPointer(ref2, p2 as unknown as number);
     const outPtr = this.mod.allocRef();
-    this.callChecked("wasm_ecc_point_subtract", ref1, ref2, outPtr);
+    const status = this.mod.call("wasm_ecc_point_subtract", ref1, ref2, outPtr) as number;
     const handle = this.mod.readRef(outPtr);
     this.mod.free(ref1);
     this.mod.free(ref2);
     this.mod.free(outPtr);
+    checkError(status, "wasm_ecc_point_subtract");
     return handle as unknown as PointHandle;
   }
 
@@ -348,11 +354,12 @@ export class CbMpc {
     this.mod.setPointer(curveRef, curve as unknown as number);
     const sPtr = this.mod.writeBytes(scalar);
     const outPtr = this.mod.allocRef();
-    this.callChecked("wasm_ecurve_mul_generator", curveRef, sPtr, scalar.length, outPtr);
+    const status = this.mod.call("wasm_ecurve_mul_generator", curveRef, sPtr, scalar.length, outPtr) as number;
     const handle = this.mod.readRef(outPtr);
     this.mod.free(curveRef);
     this.mod.free(sPtr);
     this.mod.free(outPtr);
+    checkError(status, "wasm_ecurve_mul_generator");
     return handle as unknown as PointHandle;
   }
 
@@ -395,11 +402,12 @@ export class CbMpc {
     const aPtr = this.mod.writeBytes(a);
     const bPtr = this.mod.writeBytes(b);
     const cmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.callChecked("wasm_bn_add", aPtr, a.length, bPtr, b.length, cmemOut);
+    const status = this.mod.call("wasm_bn_add", aPtr, a.length, bPtr, b.length, cmemOut) as number;
     const result = this.mod.readCmem(cmemOut);
     this.mod.freeCmem(cmemOut);
     this.mod.free(aPtr);
     this.mod.free(bPtr);
+    checkError(status, "wasm_bn_add");
     return result;
   }
 
@@ -409,12 +417,13 @@ export class CbMpc {
     const aPtr = this.mod.writeBytes(a);
     const bPtr = this.mod.writeBytes(b);
     const cmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.callChecked("wasm_ec_mod_add", curveRef, aPtr, a.length, bPtr, b.length, cmemOut);
+    const status = this.mod.call("wasm_ec_mod_add", curveRef, aPtr, a.length, bPtr, b.length, cmemOut) as number;
     const result = this.mod.readCmem(cmemOut);
     this.mod.freeCmem(cmemOut);
     this.mod.free(curveRef);
     this.mod.free(aPtr);
     this.mod.free(bPtr);
+    checkError(status, "wasm_ec_mod_add");
     return result;
   }
 
@@ -438,9 +447,10 @@ export class CbMpc {
 
   private extractPublicKey(getQFn: string, keyRef: number): Uint8Array {
     const qOut = this.mod.allocRef();
-    this.callChecked(getQFn, keyRef, qOut);
+    const status = this.mod.call(getQFn, keyRef, qOut) as number;
     const qHandle = this.mod.readRef(qOut);
     this.mod.free(qOut);
+    checkError(status, getQFn);
     const qRef = this.mod.allocRef();
     this.mod.setPointer(qRef, qHandle);
     const publicKey = this.mod.pointToSec1(qRef);
@@ -454,9 +464,10 @@ export class CbMpc {
 
   private extractXShare(getXShareFn: string, keyRef: number): Uint8Array {
     const xCmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.callChecked(getXShareFn, keyRef, xCmemOut);
+    const status = this.mod.call(getXShareFn, keyRef, xCmemOut) as number;
     const xShare = this.mod.readCmem(xCmemOut);
     this.mod.freeCmem(xCmemOut);
+    checkError(status, getXShareFn);
     return xShare;
   }
 

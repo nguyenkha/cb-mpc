@@ -56,7 +56,6 @@ const net3 = mesh(3);
 const mpKeys = await Promise.all(mps.map((m, i) => { const cv = m.createCurve(M.NID_secp256k1); return m.ecKeyMpDkg(net3[i], 3, i, ["p0", "p1", "p2"], cv); }));
 const serM: Uint8Array[][] = mpKeys.map((k: any, i: number) => mps[i].serializeEcKeyMp(k));
 const splice = (base: Uint8Array[], idx: number, part: Uint8Array) => base.map((x, i) => (i === idx ? part.slice() : x.slice()));
-const flipLast = (x: Uint8Array) => { const y = x.slice(); y[y.length - 1] ^= 1; return y; };
 
 // Transport that must never be used (calls fail before any message).
 const dead = {
@@ -99,8 +98,9 @@ for (const [backend, init] of [["wasm", () => M.initCbMpc()], ["native", () => M
   // Tampered keys are rejected at deserialization.
   await expectError(`${backend}: ECDSA-2P P1 with another key's c_key`, () => m.deserializeEcdsa2p(splice(ser0, 4, ser0b[4])));
   await expectError(`${backend}: ECDSA-2P P1 with another key's x_share`, () => m.deserializeEcdsa2p(splice(ser0, 3, ser0b[3])));
-  await expectError(`${backend}: ECDSA-2P Q not on curve`, () => m.deserializeEcdsa2p(splice(ser0, 2, flipLast(ser0[2]))));
-  await expectError(`${backend}: EdDSA-2P Q not on curve`, () => m.deserializeEcKey2p(splice(serE, 2, flipLast(serE[2]))));
+  // A point of the other curve: deterministic rejection (a flipped byte can land on another valid point).
+  await expectError(`${backend}: ECDSA-2P Q from another curve`, () => m.deserializeEcdsa2p(splice(ser0, 2, serE[2])));
+  await expectError(`${backend}: EdDSA-2P Q from another curve`, () => m.deserializeEcKey2p(splice(serE, 2, ser0[2])));
   await expectError(`${backend}: EC-key MP with another party's x_share`, () => m.deserializeEcKeyMp(splice(serM[0], 0, serM[1][0])));
   await expectError(`${backend}: EC-key MP with mismatched Q`, () => m.deserializeEcKeyMp(splice(serM[0], 1, a.serializeEcdsa2p(k0)[2])));
   // Untampered keys still load.
