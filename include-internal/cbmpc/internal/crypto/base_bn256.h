@@ -40,8 +40,8 @@ inline uint64_t mont_n0_u64(const BN_MONT_CTX* ctx, uint64_t m0) {
   if constexpr (sizeof(BN_ULONG) == sizeof(uint64_t)) {
     return uint64_t(ctx->n0[0]);
   } else {
-    uint64_t inv = m0;                                  // correct to 3 bits for odd m0
-    for (int i = 0; i < 5; i++) inv *= 2 - m0 * inv;    // Newton: 6, 12, 24, 48, 96 bits
+    uint64_t inv = m0;                                // correct to 3 bits for odd m0
+    for (int i = 0; i < 5; i++) inv *= 2 - m0 * inv;  // Newton: 6, 12, 24, 48, 96 bits
     return uint64_t(0) - inv;
   }
 }
