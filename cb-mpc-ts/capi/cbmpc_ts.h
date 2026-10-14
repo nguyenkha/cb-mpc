@@ -189,6 +189,21 @@ int zk_dl_verify(ecc_point_ref* Q, cmem_t proof, cmem_t sid, uint64_t aux);
 
 int mpc_agree_random(job_2p_ref* job, int bit_len, cmem_t* out);
 
+// ---------------------------------------------------------------------------
+// PVE (publicly verifiable encryption), batch, single recipient
+// ---------------------------------------------------------------------------
+// Uses cbmpc's built-in ECIES (P-256) base PKE. `curve_code` is the OpenSSL NID
+// of the curve the encrypted scalars live on (secp256k1, P-256 or Ed25519).
+// Returned buffers are malloc'ed; free them like any other cmem_t / cmems_t.
+
+int pve_generate_ecies_p256_keypair(cmem_t* ek, cmem_t* dk);
+int pve_batch_encrypt(int curve_code, cmem_t ek, cmem_t label, cmems_t xs, cmem_t* ciphertext);
+// Returns 0 when `ciphertext` encrypts scalars x_i with x_i*G == Qs[i] under `ek` and `label`.
+// Qs[i] may be a point from ecc_point_to_bytes or a raw compressed encoding.
+int pve_batch_verify(int curve_code, cmem_t ek, cmem_t ciphertext, cmems_t Qs_compressed, cmem_t label);
+// Does not verify the ciphertext first; call pve_batch_verify when that matters.
+int pve_batch_decrypt(int curve_code, cmem_t dk, cmem_t ek, cmem_t ciphertext, cmem_t label, cmems_t* xs);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

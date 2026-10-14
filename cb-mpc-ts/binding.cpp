@@ -577,4 +577,25 @@ int wasm_zk_dl_verify(ecc_point_ref* Q, cmem_t* proof, cmem_t* sid, uint32_t aux
   return zk_dl_verify(Q, *proof, *sid, (uint64_t(aux_hi) << 32) | aux_lo);
 }
 
+// PVE: cmem_t / cmems_t inputs passed by pointer.
+EXPORT
+int wasm_pve_batch_encrypt(int curve_code, cmem_t* ek, cmem_t* label, cmems_t* xs, cmem_t* ciphertext) {
+  if (ciphertext) *ciphertext = cmem_t{nullptr, 0};
+  if (!ek || !label || !xs) return -1;
+  return pve_batch_encrypt(curve_code, *ek, *label, *xs, ciphertext);
+}
+
+EXPORT
+int wasm_pve_batch_verify(int curve_code, cmem_t* ek, cmem_t* ciphertext, cmems_t* Qs, cmem_t* label) {
+  if (!ek || !ciphertext || !Qs || !label) return -1;
+  return pve_batch_verify(curve_code, *ek, *ciphertext, *Qs, *label);
+}
+
+EXPORT
+int wasm_pve_batch_decrypt(int curve_code, cmem_t* dk, cmem_t* ek, cmem_t* ciphertext, cmem_t* label, cmems_t* xs) {
+  if (xs) *xs = cmems_t{0, nullptr, nullptr};
+  if (!dk || !ek || !ciphertext || !label) return -1;
+  return pve_batch_decrypt(curve_code, *dk, *ek, *ciphertext, *label, xs);
+}
+
 }  // extern "C"

@@ -40,6 +40,12 @@ file(GLOB PROTO_SRCS   ${SRC_DIR}/cbmpc/protocol/*.cpp)
 
 set(BINDING_SRCS ${TS_DIR}/binding.cpp)
 
+# Public PVE API used by the PVE bindings
+set(API_SRCS
+  ${SRC_DIR}/cbmpc/api/pve_base_pke.cpp
+  ${SRC_DIR}/cbmpc/api/pve_batch_single_recipient.cpp
+)
+
 # ------------- Build target ----------------------------------------------------
 
 add_library(cbmpc SHARED
@@ -47,6 +53,7 @@ add_library(cbmpc SHARED
   ${CRYPTO_SRCS}
   ${ZK_SRCS}
   ${PROTO_SRCS}
+  ${API_SRCS}
   ${CAPI_SRCS}
   ${BINDING_SRCS}
 )
