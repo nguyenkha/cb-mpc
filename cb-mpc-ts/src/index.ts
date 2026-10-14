@@ -983,13 +983,14 @@ export class CbMpc {
     sessionId: Uint8Array,
     aux: number,
   ): Promise<Uint8Array> {
+    const [auxLo, auxHi] = splitU64(aux); // validate before allocating
     const qRef = this.mod.allocRef();
     this.mod.setPointer(qRef, Q as unknown as number);
     const wCmem = this.mod.writeCmem(witness);
     const sidCmem = this.mod.writeCmem(sessionId);
     const proofCmem = this.mod.malloc(this.mod.CMEM_SIZE);
 
-    const err = await this.mod.callAsync("wasm_zk_dl_prove", qRef, wCmem, sidCmem, ...splitU64(aux), proofCmem);
+    const err = await this.mod.callAsync("wasm_zk_dl_prove", qRef, wCmem, sidCmem, auxLo, auxHi, proofCmem);
     const proof = err === 0 ? this.mod.readCmem(proofCmem) : new Uint8Array(0);
 
     this.mod.free(qRef);
@@ -1007,12 +1008,13 @@ export class CbMpc {
     sessionId: Uint8Array,
     aux: number,
   ): Promise<boolean> {
+    const [auxLo, auxHi] = splitU64(aux); // validate before allocating
     const qRef = this.mod.allocRef();
     this.mod.setPointer(qRef, Q as unknown as number);
     const proofCmem = this.mod.writeCmem(proof);
     const sidCmem = this.mod.writeCmem(sessionId);
 
-    const result = await this.mod.callAsync("wasm_zk_dl_verify", qRef, proofCmem, sidCmem, ...splitU64(aux));
+    const result = await this.mod.callAsync("wasm_zk_dl_verify", qRef, proofCmem, sidCmem, auxLo, auxHi);
 
     this.mod.free(qRef);
     this.mod.freeCmem(proofCmem);

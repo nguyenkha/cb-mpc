@@ -501,18 +501,21 @@ int wasm_mpc_schnorr2p_eddsa_sign(job_2p_ref* job, mpc_eckey_2p_ref* key,
 
 EXPORT
 int wasm_deserialize_mpc_ecdsa2p(cmems_t* ser, mpc_ecdsa2pc_key_ref* out) {
+  if (out) *out = mpc_ecdsa2pc_key_ref{nullptr};
   if (!ser) return -1;
   return deserialize_mpc_ecdsa2p(*ser, out);
 }
 
 EXPORT
 int wasm_deserialize_mpc_eckey_2p(cmems_t* ser, mpc_eckey_2p_ref* out) {
+  if (out) *out = mpc_eckey_2p_ref{nullptr};
   if (!ser) return -1;
   return deserialize_mpc_eckey_2p(*ser, out);
 }
 
 EXPORT
 int wasm_deserialize_mpc_eckey_mp(cmems_t* ser, mpc_eckey_mp_ref* out) {
+  if (out) *out = mpc_eckey_mp_ref{nullptr};
   if (!ser) return -1;
   return deserialize_mpc_eckey_mp(*ser, out);
 }
@@ -523,24 +526,28 @@ int wasm_deserialize_mpc_eckey_mp(cmems_t* ser, mpc_eckey_mp_ref* out) {
 
 EXPORT
 int wasm_mpc_ecdsa2p_sign(job_2p_ref* job, cmem_t* sid, mpc_ecdsa2pc_key_ref* key, cmems_t* msgs, cmems_t* sigs) {
+  if (sigs) *sigs = cmems_t{0, nullptr, nullptr};
   if (!sid || !msgs) return -1;
   return mpc_ecdsa2p_sign(job, *sid, key, *msgs, sigs);
 }
 
 EXPORT
 int wasm_mpc_eckey_mp_refresh(job_mp_ref* job, cmem_t* sid, mpc_eckey_mp_ref* key, mpc_eckey_mp_ref* new_key) {
+  if (new_key) *new_key = mpc_eckey_mp_ref{nullptr};
   if (!sid) return -1;
   return mpc_eckey_mp_refresh(job, *sid, key, new_key);
 }
 
 EXPORT
 int wasm_mpc_ecdsampc_sign(job_mp_ref* job, mpc_eckey_mp_ref* key, cmem_t* msg, int sig_receiver, cmem_t* sig) {
+  if (sig) *sig = cmem_t{nullptr, 0};
   if (!msg) return -1;
   return mpc_ecdsampc_sign(job, key, *msg, sig_receiver, sig);
 }
 
 EXPORT
 int wasm_mpc_eddsampc_sign(job_mp_ref* job, mpc_eckey_mp_ref* key, cmem_t* msg, int sig_receiver, cmem_t* sig) {
+  if (sig) *sig = cmem_t{nullptr, 0};
   if (!msg) return -1;
   return mpc_eddsampc_sign(job, key, *msg, sig_receiver, sig);
 }
@@ -549,6 +556,7 @@ int wasm_mpc_eddsampc_sign(job_mp_ref* job, mpc_eckey_mp_ref* key, cmem_t* msg, 
 // through ccall without WASM_BIGINT).
 EXPORT
 int wasm_zk_dl_prove(ecc_point_ref* Q, cmem_t* w, cmem_t* sid, uint32_t aux_lo, uint32_t aux_hi, cmem_t* proof) {
+  if (proof) *proof = cmem_t{nullptr, 0};
   if (!w || !sid) return -1;
   return zk_dl_prove(Q, *w, *sid, (uint64_t(aux_hi) << 32) | aux_lo, proof);
 }

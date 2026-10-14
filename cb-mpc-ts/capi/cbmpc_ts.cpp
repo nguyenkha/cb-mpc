@@ -81,6 +81,36 @@ cmems_t copy_to_cmems(const std::vector<mem_t>& mems) {
   return out;
 }
 
+// C++ exceptions (cb_assert, std::bad_alloc, ...) must not cross the extern "C"
+// boundary: on native FFI they would terminate the host process.
+template <typename R, typename F>
+R guard(R on_error, F&& f) noexcept {
+  try {
+    return f();
+  } catch (const std::exception& e) {
+    std::cerr << "cb-mpc-ts: " << e.what() << std::endl;
+  } catch (...) {
+    std::cerr << "cb-mpc-ts: unknown exception" << std::endl;
+  }
+  return on_error;
+}
+
+template <typename F>
+int guard_rv(F&& f) noexcept {
+  return guard<int>(E_GENERAL, std::forward<F>(f));
+}
+
+// Returns E_INSUFFICIENT when the output buffers cannot be allocated.
+int copy_to_cmems_rv(const std::vector<mem_t>& mems, cmems_t* out) {
+  *out = copy_to_cmems(mems);
+  return (!mems.empty() && out->count == 0) ? E_INSUFFICIENT : 0;
+}
+
+int copy_to_cmem_rv(mem_t mem, cmem_t* out) {
+  *out = copy_to_cmem(mem);
+  return (mem.size > 0 && !out->data) ? E_INSUFFICIENT : 0;
+}
+
 template <typename T>
 T* as(void* opaque) {
   return static_cast<T*>(opaque);
@@ -221,7 +251,9 @@ int get_n_parties(const job_mp_ref* job) {
   return static_cast<int>(as<job_mp_t>(job->opaque)->get_n_parties());
 }
 
-mpc_party_set_ref new_party_set(void) { return mpc_party_set_ref{new party_set_t()}; }
+mpc_party_set_ref new_party_set(void) {
+  return guard<mpc_party_set_ref>(mpc_party_set_ref{nullptr}, [] { return mpc_party_set_ref{new party_set_t()}; });
+}
 
 void party_set_add(mpc_party_set_ref* set, int party_idx) {
   if (valid_ref(set)) as<party_set_t>(set->opaque)->add(party_idx);
@@ -234,116 +266,154 @@ void free_party_set(mpc_party_set_ref ctx) { delete as<party_set_t>(ctx.opaque);
 // ===========================================================================
 
 ecurve_ref new_ecurve(int curve_code) {
-  ecurve_t curve = ecurve_t::find(curve_code);
-  if (!curve) return ecurve_ref{nullptr};
-  return ecurve_ref{new ecurve_t(curve)};
+  return guard<ecurve_ref>(ecurve_ref{nullptr}, [&]() -> ecurve_ref {
+    ecurve_t curve = ecurve_t::find(curve_code);
+    if (!curve) return ecurve_ref{nullptr};
+    return ecurve_ref{new ecurve_t(curve)};
+  });
 }
 
 void free_ecurve(ecurve_ref ref) { delete as<ecurve_t>(ref.opaque); }
 
 ecc_point_ref ecurve_generator(ecurve_ref* curve) {
-  if (!valid_ref(curve)) return ecc_point_ref{nullptr};
-  return ecc_point_ref{new ecc_point_t(as<ecurve_t>(curve->opaque)->generator())};
+  return guard<ecc_point_ref>(ecc_point_ref{nullptr}, [&]() -> ecc_point_ref {
+    if (!valid_ref(curve)) return ecc_point_ref{nullptr};
+    return ecc_point_ref{new ecc_point_t(as<ecurve_t>(curve->opaque)->generator())};
+  });
 }
 
 cmem_t ecurve_order(ecurve_ref* curve) {
-  if (!valid_ref(curve)) return cmem_t{nullptr, 0};
-  bn_t order = as<ecurve_t>(curve->opaque)->order();
-  return copy_to_cmem(order.to_bin());
+  return guard<cmem_t>(cmem_t{nullptr, 0}, [&]() -> cmem_t {
+    if (!valid_ref(curve)) return cmem_t{nullptr, 0};
+    bn_t order = as<ecurve_t>(curve->opaque)->order();
+    return copy_to_cmem(order.to_bin());
+  });
 }
 
 int ecurve_get_curve_code(ecurve_ref* curve) {
-  if (!valid_ref(curve)) return -1;
-  return as<ecurve_t>(curve->opaque)->get_openssl_code();
+  return guard_rv([&]() -> int {
+    if (!valid_ref(curve)) return -1;
+    return as<ecurve_t>(curve->opaque)->get_openssl_code();
+  });
 }
 
 cmem_t ecurve_random_scalar(ecurve_ref* curve) {
-  if (!valid_ref(curve)) return cmem_t{nullptr, 0};
-  const ecurve_t& c = *as<ecurve_t>(curve->opaque);
-  bn_t k = c.get_random_value();
-  return copy_to_cmem(k.to_bin(c.order().get_bin_size()));
+  return guard<cmem_t>(cmem_t{nullptr, 0}, [&]() -> cmem_t {
+    if (!valid_ref(curve)) return cmem_t{nullptr, 0};
+    const ecurve_t& c = *as<ecurve_t>(curve->opaque);
+    bn_t k = c.get_random_value();
+    return copy_to_cmem(k.to_bin(c.order().get_bin_size()));
+  });
 }
 
 ecc_point_ref ecurve_mul_generator(ecurve_ref* curve, cmem_t scalar) {
-  if (!valid_ref(curve)) return ecc_point_ref{nullptr};
-  bn_t k = bn_t::from_bin(view(scalar));
-  return ecc_point_ref{new ecc_point_t(as<ecurve_t>(curve->opaque)->mul_to_generator(k))};
+  return guard<ecc_point_ref>(ecc_point_ref{nullptr}, [&]() -> ecc_point_ref {
+    if (!valid_ref(curve)) return ecc_point_ref{nullptr};
+    bn_t k = bn_t::from_bin(view(scalar));
+    return ecc_point_ref{new ecc_point_t(as<ecurve_t>(curve->opaque)->mul_to_generator(k))};
+  });
 }
 
 void free_ecc_point(ecc_point_ref ref) { delete as<ecc_point_t>(ref.opaque); }
 
 ecc_point_ref ecc_point_from_bytes(cmem_t point_bytes) {
-  auto point = std::make_unique<ecc_point_t>();
-  if (coinbase::deser(view(point_bytes), *point)) return ecc_point_ref{nullptr};
-  return ecc_point_ref{point.release()};
+  return guard<ecc_point_ref>(ecc_point_ref{nullptr}, [&]() -> ecc_point_ref {
+    auto point = std::make_unique<ecc_point_t>();
+    if (coinbase::deser(view(point_bytes), *point)) return ecc_point_ref{nullptr};
+    return ecc_point_ref{point.release()};
+  });
 }
 
 cmem_t ecc_point_to_bytes(ecc_point_ref* point) {
-  if (!valid_ref(point)) return cmem_t{nullptr, 0};
-  return copy_to_cmem(coinbase::ser(*as<ecc_point_t>(point->opaque)));
+  return guard<cmem_t>(cmem_t{nullptr, 0}, [&]() -> cmem_t {
+    if (!valid_ref(point)) return cmem_t{nullptr, 0};
+    return copy_to_cmem(coinbase::ser(*as<ecc_point_t>(point->opaque)));
+  });
 }
 
 ecc_point_ref ecc_point_multiply(ecc_point_ref* point, cmem_t scalar) {
-  if (!valid_ref(point)) return ecc_point_ref{nullptr};
-  bn_t k = bn_t::from_bin(view(scalar));
-  return ecc_point_ref{new ecc_point_t(k * (*as<ecc_point_t>(point->opaque)))};
+  return guard<ecc_point_ref>(ecc_point_ref{nullptr}, [&]() -> ecc_point_ref {
+    if (!valid_ref(point)) return ecc_point_ref{nullptr};
+    bn_t k = bn_t::from_bin(view(scalar));
+    return ecc_point_ref{new ecc_point_t(k * (*as<ecc_point_t>(point->opaque)))};
+  });
 }
 
 ecc_point_ref ecc_point_add(ecc_point_ref* point1, ecc_point_ref* point2) {
-  if (!valid_ref(point1) || !valid_ref(point2)) return ecc_point_ref{nullptr};
-  return ecc_point_ref{new ecc_point_t(*as<ecc_point_t>(point1->opaque) + *as<ecc_point_t>(point2->opaque))};
+  return guard<ecc_point_ref>(ecc_point_ref{nullptr}, [&]() -> ecc_point_ref {
+    if (!valid_ref(point1) || !valid_ref(point2)) return ecc_point_ref{nullptr};
+    return ecc_point_ref{new ecc_point_t(*as<ecc_point_t>(point1->opaque) + *as<ecc_point_t>(point2->opaque))};
+  });
 }
 
 ecc_point_ref ecc_point_subtract(ecc_point_ref* point1, ecc_point_ref* point2) {
-  if (!valid_ref(point1) || !valid_ref(point2)) return ecc_point_ref{nullptr};
-  return ecc_point_ref{new ecc_point_t(*as<ecc_point_t>(point1->opaque) - *as<ecc_point_t>(point2->opaque))};
+  return guard<ecc_point_ref>(ecc_point_ref{nullptr}, [&]() -> ecc_point_ref {
+    if (!valid_ref(point1) || !valid_ref(point2)) return ecc_point_ref{nullptr};
+    return ecc_point_ref{new ecc_point_t(*as<ecc_point_t>(point1->opaque) - *as<ecc_point_t>(point2->opaque))};
+  });
 }
 
 cmem_t ecc_point_get_x(ecc_point_ref* point) {
-  if (!valid_ref(point)) return cmem_t{nullptr, 0};
-  return copy_to_cmem(as<ecc_point_t>(point->opaque)->get_x().to_bin());
+  return guard<cmem_t>(cmem_t{nullptr, 0}, [&]() -> cmem_t {
+    if (!valid_ref(point)) return cmem_t{nullptr, 0};
+    return copy_to_cmem(as<ecc_point_t>(point->opaque)->get_x().to_bin());
+  });
 }
 
 cmem_t ecc_point_get_y(ecc_point_ref* point) {
-  if (!valid_ref(point)) return cmem_t{nullptr, 0};
-  return copy_to_cmem(as<ecc_point_t>(point->opaque)->get_y().to_bin());
+  return guard<cmem_t>(cmem_t{nullptr, 0}, [&]() -> cmem_t {
+    if (!valid_ref(point)) return cmem_t{nullptr, 0};
+    return copy_to_cmem(as<ecc_point_t>(point->opaque)->get_y().to_bin());
+  });
 }
 
 int ecc_point_is_zero(ecc_point_ref* point) {
-  if (!valid_ref(point)) return 0;
-  return as<ecc_point_t>(point->opaque)->is_infinity() ? 1 : 0;
+  return guard_rv([&]() -> int {
+    if (!valid_ref(point)) return 0;
+    return as<ecc_point_t>(point->opaque)->is_infinity() ? 1 : 0;
+  });
 }
 
 int ecc_point_equals(ecc_point_ref* point1, ecc_point_ref* point2) {
-  if (!valid_ref(point1) || !valid_ref(point2)) return 0;
-  return *as<ecc_point_t>(point1->opaque) == *as<ecc_point_t>(point2->opaque) ? 1 : 0;
+  return guard_rv([&]() -> int {
+    if (!valid_ref(point1) || !valid_ref(point2)) return 0;
+    return *as<ecc_point_t>(point1->opaque) == *as<ecc_point_t>(point2->opaque) ? 1 : 0;
+  });
 }
 
 int ecc_verify_der(int curve_code, cmem_t pub_oct, cmem_t hash, cmem_t der_sig) {
-  ecurve_t curve = ecurve_t::find(curve_code);
-  if (!curve) return -1;
-  ecc_point_t Q;
-  if (Q.from_oct(curve, view(pub_oct))) return -2;
-  ecc_pub_key_t pub(Q);
-  return pub.verify(view(hash), view(der_sig)) ? -3 : 0;
+  return guard_rv([&]() -> int {
+    ecurve_t curve = ecurve_t::find(curve_code);
+    if (!curve) return -1;
+    ecc_point_t Q;
+    if (Q.from_oct(curve, view(pub_oct))) return -2;
+    ecc_pub_key_t pub(Q);
+    return pub.verify(view(hash), view(der_sig)) ? -3 : 0;
+  });
 }
 
 cmem_t bn_add(cmem_t a, cmem_t b) {
-  bn_t c = bn_t::from_bin(view(a)) + bn_t::from_bin(view(b));
-  return copy_to_cmem(c.to_bin());
+  return guard<cmem_t>(cmem_t{nullptr, 0}, [&]() -> cmem_t {
+    bn_t c = bn_t::from_bin(view(a)) + bn_t::from_bin(view(b));
+    return copy_to_cmem(c.to_bin());
+  });
 }
 
 cmem_t ec_mod_add(ecurve_ref* curve, cmem_t a, cmem_t b) {
-  if (!valid_ref(curve)) return cmem_t{nullptr, 0};
-  const mod_t& q = as<ecurve_t>(curve->opaque)->order();
-  bn_t c = (bn_t::from_bin(view(a)) + bn_t::from_bin(view(b))) % q;
-  return copy_to_cmem(c.to_bin(q.get_bin_size()));
+  return guard<cmem_t>(cmem_t{nullptr, 0}, [&]() -> cmem_t {
+    if (!valid_ref(curve)) return cmem_t{nullptr, 0};
+    const mod_t& q = as<ecurve_t>(curve->opaque)->order();
+    bn_t c = (bn_t::from_bin(view(a)) + bn_t::from_bin(view(b))) % q;
+    return copy_to_cmem(c.to_bin(q.get_bin_size()));
+  });
 }
 
 cmem_t bn_from_int64(int64_t value) {
-  bn_t bn;
-  bn.set_int64(value);
-  return copy_to_cmem(bn.to_bin());
+  return guard<cmem_t>(cmem_t{nullptr, 0}, [&]() -> cmem_t {
+    bn_t bn;
+    bn.set_int64(value);
+    return copy_to_cmem(bn.to_bin());
+  });
 }
 
 // ===========================================================================
@@ -351,91 +421,112 @@ cmem_t bn_from_int64(int64_t value) {
 // ===========================================================================
 
 int mpc_ecdsa2p_dkg(job_2p_ref* j, int curve_code, mpc_ecdsa2pc_key_ref* k) {
-  job_2p_t* job = job_of(j);
-  ecurve_t curve = ecurve_t::find(curve_code);
-  if (!job || !k || !curve) return E_BADARG;
+  if (k) *k = mpc_ecdsa2pc_key_ref{nullptr};
+  return guard_rv([&]() -> int {
+    job_2p_t* job = job_of(j);
+    ecurve_t curve = ecurve_t::find(curve_code);
+    if (!job || !k || !curve) return E_BADARG;
 
-  auto key = std::make_unique<ecdsa2pc::key_t>();
-  if (error_t rv = ecdsa2pc::dkg(*job, curve, *key)) return rv;
-  *k = mpc_ecdsa2pc_key_ref{key.release()};
-  return 0;
+    auto key = std::make_unique<ecdsa2pc::key_t>();
+    if (error_t rv = ecdsa2pc::dkg(*job, curve, *key)) return rv;
+    *k = mpc_ecdsa2pc_key_ref{key.release()};
+    return 0;
+  });
 }
 
 int mpc_ecdsa2p_refresh(job_2p_ref* j, mpc_ecdsa2pc_key_ref* k, mpc_ecdsa2pc_key_ref* nk) {
-  job_2p_t* job = job_of(j);
-  if (!job || !valid_ref(k) || !nk) return E_BADARG;
+  if (nk) *nk = mpc_ecdsa2pc_key_ref{nullptr};
+  return guard_rv([&]() -> int {
+    job_2p_t* job = job_of(j);
+    if (!job || !valid_ref(k) || !nk) return E_BADARG;
 
-  auto new_key = std::make_unique<ecdsa2pc::key_t>();
-  if (error_t rv = ecdsa2pc::refresh(*job, *as<ecdsa2pc::key_t>(k->opaque), *new_key)) return rv;
-  *nk = mpc_ecdsa2pc_key_ref{new_key.release()};
-  return 0;
+    auto new_key = std::make_unique<ecdsa2pc::key_t>();
+    if (error_t rv = ecdsa2pc::refresh(*job, *as<ecdsa2pc::key_t>(k->opaque), *new_key)) return rv;
+    *nk = mpc_ecdsa2pc_key_ref{new_key.release()};
+    return 0;
+  });
 }
 
 int mpc_ecdsa2p_sign(job_2p_ref* j, cmem_t sid_mem, mpc_ecdsa2pc_key_ref* k, cmems_t msgs, cmems_t* sigs) {
-  job_2p_t* job = job_of(j);
-  if (!job || !valid_ref(k) || !sigs) return E_BADARG;
-  *sigs = cmems_t{0, nullptr, nullptr};
+  if (sigs) *sigs = cmems_t{0, nullptr, nullptr};
+  return guard_rv([&]() -> int {
+    job_2p_t* job = job_of(j);
+    if (!job || !valid_ref(k) || !sigs) return E_BADARG;
+    *sigs = cmems_t{0, nullptr, nullptr};
 
-  buf_t sid(view(sid_mem));
-  std::vector<buf_t> owned_msgs = bufs_from_cmems(msgs);
-  std::vector<mem_t> messages = buf_t::to_mems(owned_msgs);
+    buf_t sid(view(sid_mem));
+    std::vector<buf_t> owned_msgs = bufs_from_cmems(msgs);
+    std::vector<mem_t> messages = buf_t::to_mems(owned_msgs);
 
-  std::vector<buf_t> signatures;
-  if (error_t rv = ecdsa2pc::sign_batch(*job, sid, *as<ecdsa2pc::key_t>(k->opaque), messages, signatures)) return rv;
-  *sigs = copy_to_cmems(buf_t::to_mems(signatures));
-  return 0;
+    std::vector<buf_t> signatures;
+    if (error_t rv = ecdsa2pc::sign_batch(*job, sid, *as<ecdsa2pc::key_t>(k->opaque), messages, signatures)) return rv;
+    return copy_to_cmems_rv(buf_t::to_mems(signatures), sigs);
+  });
 }
 
 void free_mpc_ecdsa2p_key(mpc_ecdsa2pc_key_ref key) { delete as<ecdsa2pc::key_t>(key.opaque); }
 
 int mpc_ecdsa2p_key_get_role_index(mpc_ecdsa2pc_key_ref* key) {
-  if (!valid_ref(key)) return -1;
-  return static_cast<int>(as<ecdsa2pc::key_t>(key->opaque)->role);
+  return guard_rv([&]() -> int {
+    if (!valid_ref(key)) return -1;
+    return static_cast<int>(as<ecdsa2pc::key_t>(key->opaque)->role);
+  });
 }
 
 ecc_point_ref mpc_ecdsa2p_key_get_Q(mpc_ecdsa2pc_key_ref* key) {
-  if (!valid_ref(key)) return ecc_point_ref{nullptr};
-  return ecc_point_ref{new ecc_point_t(as<ecdsa2pc::key_t>(key->opaque)->Q)};
+  return guard<ecc_point_ref>(ecc_point_ref{nullptr}, [&]() -> ecc_point_ref {
+    if (!valid_ref(key)) return ecc_point_ref{nullptr};
+    return ecc_point_ref{new ecc_point_t(as<ecdsa2pc::key_t>(key->opaque)->Q)};
+  });
 }
 
 cmem_t mpc_ecdsa2p_key_get_x_share(mpc_ecdsa2pc_key_ref* key) {
-  if (!valid_ref(key)) return cmem_t{nullptr, 0};
-  const auto& k = *as<ecdsa2pc::key_t>(key->opaque);
-  return copy_to_cmem(k.x_share.to_bin(x_share_bin_size(k.x_share, k.curve)));
+  return guard<cmem_t>(cmem_t{nullptr, 0}, [&]() -> cmem_t {
+    if (!valid_ref(key)) return cmem_t{nullptr, 0};
+    const auto& k = *as<ecdsa2pc::key_t>(key->opaque);
+    return copy_to_cmem(k.x_share.to_bin(x_share_bin_size(k.x_share, k.curve)));
+  });
 }
 
 int mpc_ecdsa2p_key_get_curve_code(mpc_ecdsa2pc_key_ref* key) {
-  if (!valid_ref(key)) return -1;
-  return as<ecdsa2pc::key_t>(key->opaque)->curve.get_openssl_code();
+  return guard_rv([&]() -> int {
+    if (!valid_ref(key)) return -1;
+    return as<ecdsa2pc::key_t>(key->opaque)->curve.get_openssl_code();
+  });
 }
 
 // Layout (unchanged from the cgobinding era): [role:int32, curve, Q, x_share, c_key, paillier].
 int serialize_mpc_ecdsa2p(mpc_ecdsa2pc_key_ref* k, cmems_t* ser) {
-  if (!valid_ref(k) || !ser) return E_BADARG;
-  const auto& key = *as<ecdsa2pc::key_t>(k->opaque);
-  int32_t role = static_cast<int32_t>(key.role);
-  std::vector<buf_t> parts = {coinbase::ser(role),        coinbase::ser(key.curve), coinbase::ser(key.Q),
-                              coinbase::ser(key.x_share), coinbase::ser(key.c_key), coinbase::ser(key.paillier)};
-  *ser = copy_to_cmems(buf_t::to_mems(parts));
-  return 0;
+  if (ser) *ser = cmems_t{0, nullptr, nullptr};
+  return guard_rv([&]() -> int {
+    if (!valid_ref(k) || !ser) return E_BADARG;
+    const auto& key = *as<ecdsa2pc::key_t>(k->opaque);
+    int32_t role = static_cast<int32_t>(key.role);
+    std::vector<buf_t> parts = {coinbase::ser(role),        coinbase::ser(key.curve), coinbase::ser(key.Q),
+                                coinbase::ser(key.x_share), coinbase::ser(key.c_key), coinbase::ser(key.paillier)};
+    return copy_to_cmems_rv(buf_t::to_mems(parts), ser);
+  });
 }
 
 int deserialize_mpc_ecdsa2p(cmems_t sers, mpc_ecdsa2pc_key_ref* k) {
-  if (!k) return E_BADARG;
-  std::vector<buf_t> parts = bufs_from_cmems(sers);
-  if (parts.size() != 6) return E_FORMAT;
+  if (k) *k = mpc_ecdsa2pc_key_ref{nullptr};
+  return guard_rv([&]() -> int {
+    if (!k) return E_BADARG;
+    std::vector<buf_t> parts = bufs_from_cmems(sers);
+    if (parts.size() != 6) return E_FORMAT;
 
-  auto key = std::make_unique<ecdsa2pc::key_t>();
-  int32_t role;
-  if (coinbase::deser(parts[0], role) || (role != 0 && role != 1)) return E_FORMAT;
-  key->role = static_cast<party_t>(role);
-  if (coinbase::deser(parts[1], key->curve)) return E_FORMAT;
-  if (coinbase::deser(parts[2], key->Q)) return E_FORMAT;
-  if (coinbase::deser(parts[3], key->x_share)) return E_FORMAT;
-  if (coinbase::deser(parts[4], key->c_key)) return E_FORMAT;
-  if (coinbase::deser(parts[5], key->paillier)) return E_FORMAT;
-  *k = mpc_ecdsa2pc_key_ref{key.release()};
-  return 0;
+    auto key = std::make_unique<ecdsa2pc::key_t>();
+    int32_t role;
+    if (coinbase::deser(parts[0], role) || (role != 0 && role != 1)) return E_FORMAT;
+    key->role = static_cast<party_t>(role);
+    if (coinbase::deser(parts[1], key->curve)) return E_FORMAT;
+    if (coinbase::deser(parts[2], key->Q)) return E_FORMAT;
+    if (coinbase::deser(parts[3], key->x_share)) return E_FORMAT;
+    if (coinbase::deser(parts[4], key->c_key)) return E_FORMAT;
+    if (coinbase::deser(parts[5], key->paillier)) return E_FORMAT;
+    *k = mpc_ecdsa2pc_key_ref{key.release()};
+    return 0;
+  });
 }
 
 // ===========================================================================
@@ -443,78 +534,96 @@ int deserialize_mpc_ecdsa2p(cmems_t sers, mpc_ecdsa2pc_key_ref* k) {
 // ===========================================================================
 
 int mpc_eckey_2p_dkg(job_2p_ref* j, int curve_code, mpc_eckey_2p_ref* k) {
-  job_2p_t* job = job_of(j);
-  ecurve_t curve = ecurve_t::find(curve_code);
-  if (!job || !k || !curve) return E_BADARG;
+  if (k) *k = mpc_eckey_2p_ref{nullptr};
+  return guard_rv([&]() -> int {
+    job_2p_t* job = job_of(j);
+    ecurve_t curve = ecurve_t::find(curve_code);
+    if (!job || !k || !curve) return E_BADARG;
 
-  auto key = std::make_unique<eckey::key_share_2p_t>();
-  buf_t sid;
-  if (error_t rv = eckey::key_share_2p_t::dkg(*job, curve, *key, sid)) return rv;
-  *k = mpc_eckey_2p_ref{key.release()};
-  return 0;
+    auto key = std::make_unique<eckey::key_share_2p_t>();
+    buf_t sid;
+    if (error_t rv = eckey::key_share_2p_t::dkg(*job, curve, *key, sid)) return rv;
+    *k = mpc_eckey_2p_ref{key.release()};
+    return 0;
+  });
 }
 
 int mpc_schnorr2p_eddsa_sign(job_2p_ref* j, mpc_eckey_2p_ref* k, cmem_t msg, cmem_t* sig_out) {
-  job_2p_t* job = job_of(j);
-  if (!job || !valid_ref(k) || !sig_out) return E_BADARG;
-  *sig_out = cmem_t{nullptr, 0};
+  if (sig_out) *sig_out = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    job_2p_t* job = job_of(j);
+    if (!job || !valid_ref(k) || !sig_out) return E_BADARG;
+    *sig_out = cmem_t{nullptr, 0};
 
-  buf_t sig;
-  if (error_t rv = schnorr2p::sign(*job, *as<eckey::key_share_2p_t>(k->opaque), view(msg), sig,
-                                   schnorr2p::variant_e::EdDSA))
-    return rv;
-  *sig_out = copy_to_cmem(sig);
-  return 0;
+    buf_t sig;
+    if (error_t rv = schnorr2p::sign(*job, *as<eckey::key_share_2p_t>(k->opaque), view(msg), sig,
+                                     schnorr2p::variant_e::EdDSA))
+      return rv;
+    return copy_to_cmem_rv(sig, sig_out);
+  });
 }
 
 void free_mpc_eckey_2p(mpc_eckey_2p_ref key) { delete as<eckey::key_share_2p_t>(key.opaque); }
 
 int mpc_eckey_2p_get_role_index(mpc_eckey_2p_ref* key) {
-  if (!valid_ref(key)) return -1;
-  return static_cast<int>(as<eckey::key_share_2p_t>(key->opaque)->role);
+  return guard_rv([&]() -> int {
+    if (!valid_ref(key)) return -1;
+    return static_cast<int>(as<eckey::key_share_2p_t>(key->opaque)->role);
+  });
 }
 
 ecc_point_ref mpc_eckey_2p_get_Q(mpc_eckey_2p_ref* key) {
-  if (!valid_ref(key)) return ecc_point_ref{nullptr};
-  return ecc_point_ref{new ecc_point_t(as<eckey::key_share_2p_t>(key->opaque)->Q)};
+  return guard<ecc_point_ref>(ecc_point_ref{nullptr}, [&]() -> ecc_point_ref {
+    if (!valid_ref(key)) return ecc_point_ref{nullptr};
+    return ecc_point_ref{new ecc_point_t(as<eckey::key_share_2p_t>(key->opaque)->Q)};
+  });
 }
 
 cmem_t mpc_eckey_2p_get_x_share(mpc_eckey_2p_ref* key) {
-  if (!valid_ref(key)) return cmem_t{nullptr, 0};
-  const auto& k = *as<eckey::key_share_2p_t>(key->opaque);
-  return copy_to_cmem(k.x_share.to_bin(x_share_bin_size(k.x_share, k.curve)));
+  return guard<cmem_t>(cmem_t{nullptr, 0}, [&]() -> cmem_t {
+    if (!valid_ref(key)) return cmem_t{nullptr, 0};
+    const auto& k = *as<eckey::key_share_2p_t>(key->opaque);
+    return copy_to_cmem(k.x_share.to_bin(x_share_bin_size(k.x_share, k.curve)));
+  });
 }
 
 int mpc_eckey_2p_get_curve_code(mpc_eckey_2p_ref* key) {
-  if (!valid_ref(key)) return -1;
-  return as<eckey::key_share_2p_t>(key->opaque)->curve.get_openssl_code();
+  return guard_rv([&]() -> int {
+    if (!valid_ref(key)) return -1;
+    return as<eckey::key_share_2p_t>(key->opaque)->curve.get_openssl_code();
+  });
 }
 
 // Layout: [role:int32, curve, Q, x_share].
 int serialize_mpc_eckey_2p(mpc_eckey_2p_ref* k, cmems_t* ser) {
-  if (!valid_ref(k) || !ser) return E_BADARG;
-  const auto& key = *as<eckey::key_share_2p_t>(k->opaque);
-  int32_t role = static_cast<int32_t>(key.role);
-  std::vector<buf_t> parts = {coinbase::ser(role), coinbase::ser(key.curve), coinbase::ser(key.Q),
-                              coinbase::ser(key.x_share)};
-  *ser = copy_to_cmems(buf_t::to_mems(parts));
-  return 0;
+  if (ser) *ser = cmems_t{0, nullptr, nullptr};
+  return guard_rv([&]() -> int {
+    if (!valid_ref(k) || !ser) return E_BADARG;
+    const auto& key = *as<eckey::key_share_2p_t>(k->opaque);
+    int32_t role = static_cast<int32_t>(key.role);
+    std::vector<buf_t> parts = {coinbase::ser(role), coinbase::ser(key.curve), coinbase::ser(key.Q),
+                                coinbase::ser(key.x_share)};
+    return copy_to_cmems_rv(buf_t::to_mems(parts), ser);
+  });
 }
 
 int deserialize_mpc_eckey_2p(cmems_t sers, mpc_eckey_2p_ref* k) {
-  if (!k) return E_BADARG;
-  std::vector<buf_t> parts = bufs_from_cmems(sers);
-  if (parts.size() != 4) return E_FORMAT;
+  if (k) *k = mpc_eckey_2p_ref{nullptr};
+  return guard_rv([&]() -> int {
+    if (!k) return E_BADARG;
+    std::vector<buf_t> parts = bufs_from_cmems(sers);
+    if (parts.size() != 4) return E_FORMAT;
 
-  auto key = std::make_unique<eckey::key_share_2p_t>();
-  int32_t role;
-  if (coinbase::deser(parts[0], role) || (role != 0 && role != 1)) return E_FORMAT;
-  key->role = static_cast<party_t>(role);
-  if (coinbase::deser(parts[1], key->curve)) return E_FORMAT;
-  if (coinbase::deser(parts[2], key->Q)) return E_FORMAT;
-  if (coinbase::deser(parts[3], key->x_share)) return E_FORMAT;
-  *k = mpc_eckey_2p_ref{key.release()};
-  return 0;
+    auto key = std::make_unique<eckey::key_share_2p_t>();
+    int32_t role;
+    if (coinbase::deser(parts[0], role) || (role != 0 && role != 1)) return E_FORMAT;
+    key->role = static_cast<party_t>(role);
+    if (coinbase::deser(parts[1], key->curve)) return E_FORMAT;
+    if (coinbase::deser(parts[2], key->Q)) return E_FORMAT;
+    if (coinbase::deser(parts[3], key->x_share)) return E_FORMAT;
+    *k = mpc_eckey_2p_ref{key.release()};
+    return 0;
+  });
 }
 
 // ===========================================================================
@@ -522,102 +631,125 @@ int deserialize_mpc_eckey_2p(cmems_t sers, mpc_eckey_2p_ref* k) {
 // ===========================================================================
 
 int mpc_eckey_mp_dkg(job_mp_ref* j, ecurve_ref* curve, mpc_eckey_mp_ref* k) {
-  job_mp_t* job = job_of(j);
-  if (!job || !valid_ref(curve) || !k) return E_BADARG;
+  if (k) *k = mpc_eckey_mp_ref{nullptr};
+  return guard_rv([&]() -> int {
+    job_mp_t* job = job_of(j);
+    if (!job || !valid_ref(curve) || !k) return E_BADARG;
 
-  auto key = std::make_unique<eckey::key_share_mp_t>();
-  buf_t sid;
-  if (error_t rv = eckey::key_share_mp_t::dkg(*job, *as<ecurve_t>(curve->opaque), *key, sid)) return rv;
-  *k = mpc_eckey_mp_ref{key.release()};
-  return 0;
+    auto key = std::make_unique<eckey::key_share_mp_t>();
+    buf_t sid;
+    if (error_t rv = eckey::key_share_mp_t::dkg(*job, *as<ecurve_t>(curve->opaque), *key, sid)) return rv;
+    *k = mpc_eckey_mp_ref{key.release()};
+    return 0;
+  });
 }
 
 int mpc_eckey_mp_refresh(job_mp_ref* j, cmem_t sid_mem, mpc_eckey_mp_ref* k, mpc_eckey_mp_ref* nk) {
-  job_mp_t* job = job_of(j);
-  if (!job || !valid_ref(k) || !nk) return E_BADARG;
+  if (nk) *nk = mpc_eckey_mp_ref{nullptr};
+  return guard_rv([&]() -> int {
+    job_mp_t* job = job_of(j);
+    if (!job || !valid_ref(k) || !nk) return E_BADARG;
 
-  auto new_key = std::make_unique<eckey::key_share_mp_t>();
-  buf_t sid(view(sid_mem));
-  if (error_t rv = eckey::key_share_mp_t::refresh(*job, sid, *as<eckey::key_share_mp_t>(k->opaque), *new_key))
-    return rv;
-  *nk = mpc_eckey_mp_ref{new_key.release()};
-  return 0;
+    auto new_key = std::make_unique<eckey::key_share_mp_t>();
+    buf_t sid(view(sid_mem));
+    if (error_t rv = eckey::key_share_mp_t::refresh(*job, sid, *as<eckey::key_share_mp_t>(k->opaque), *new_key))
+      return rv;
+    *nk = mpc_eckey_mp_ref{new_key.release()};
+    return 0;
+  });
 }
 
 void free_mpc_eckey_mp(mpc_eckey_mp_ref key) { delete as<eckey::key_share_mp_t>(key.opaque); }
 
 int mpc_eckey_mp_get_party_name(mpc_eckey_mp_ref* k, cmem_t* party_name) {
-  if (!valid_ref(k) || !party_name) return 1;
-  *party_name = copy_to_cmem(mem_t(as<eckey::key_share_mp_t>(k->opaque)->party_name));
-  return 0;
+  if (party_name) *party_name = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    if (!valid_ref(k) || !party_name) return 1;
+    return copy_to_cmem_rv(mem_t(as<eckey::key_share_mp_t>(k->opaque)->party_name), party_name);
+  });
 }
 
 int mpc_eckey_mp_get_x_share(mpc_eckey_mp_ref* k, cmem_t* x_share) {
-  if (!valid_ref(k) || !x_share) return 1;
-  const auto& key = *as<eckey::key_share_mp_t>(k->opaque);
-  *x_share = copy_to_cmem(key.x_share.to_bin(key.curve.order().get_bin_size()));
-  return 0;
+  if (x_share) *x_share = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    if (!valid_ref(k) || !x_share) return 1;
+    const auto& key = *as<eckey::key_share_mp_t>(k->opaque);
+    return copy_to_cmem_rv(key.x_share.to_bin(key.curve.order().get_bin_size()), x_share);
+  });
 }
 
 ecc_point_ref mpc_eckey_mp_get_Q(mpc_eckey_mp_ref* k) {
-  if (!valid_ref(k)) return ecc_point_ref{nullptr};
-  return ecc_point_ref{new ecc_point_t(as<eckey::key_share_mp_t>(k->opaque)->Q)};
+  return guard<ecc_point_ref>(ecc_point_ref{nullptr}, [&]() -> ecc_point_ref {
+    if (!valid_ref(k)) return ecc_point_ref{nullptr};
+    return ecc_point_ref{new ecc_point_t(as<eckey::key_share_mp_t>(k->opaque)->Q)};
+  });
 }
 
 ecurve_ref mpc_eckey_mp_get_curve(mpc_eckey_mp_ref* k) {
-  if (!valid_ref(k)) return ecurve_ref{nullptr};
-  return ecurve_ref{new ecurve_t(as<eckey::key_share_mp_t>(k->opaque)->curve)};
+  return guard<ecurve_ref>(ecurve_ref{nullptr}, [&]() -> ecurve_ref {
+    if (!valid_ref(k)) return ecurve_ref{nullptr};
+    return ecurve_ref{new ecurve_t(as<eckey::key_share_mp_t>(k->opaque)->curve)};
+  });
 }
 
 // Layout: [x_share, Q, Qis, curve, party_name].
 int serialize_mpc_eckey_mp(mpc_eckey_mp_ref* k, cmems_t* ser) {
-  if (!valid_ref(k) || !ser) return E_BADARG;
-  const auto& key = *as<eckey::key_share_mp_t>(k->opaque);
-  std::vector<buf_t> parts = {coinbase::ser(key.x_share), coinbase::ser(key.Q), coinbase::ser(key.Qis),
-                              coinbase::ser(key.curve), coinbase::ser(key.party_name)};
-  *ser = copy_to_cmems(buf_t::to_mems(parts));
-  return 0;
+  if (ser) *ser = cmems_t{0, nullptr, nullptr};
+  return guard_rv([&]() -> int {
+    if (!valid_ref(k) || !ser) return E_BADARG;
+    const auto& key = *as<eckey::key_share_mp_t>(k->opaque);
+    std::vector<buf_t> parts = {coinbase::ser(key.x_share), coinbase::ser(key.Q), coinbase::ser(key.Qis),
+                                coinbase::ser(key.curve), coinbase::ser(key.party_name)};
+    return copy_to_cmems_rv(buf_t::to_mems(parts), ser);
+  });
 }
 
 int deserialize_mpc_eckey_mp(cmems_t sers, mpc_eckey_mp_ref* k) {
-  if (!k) return E_BADARG;
-  std::vector<buf_t> parts = bufs_from_cmems(sers);
-  if (parts.size() != 5) return E_FORMAT;
+  if (k) *k = mpc_eckey_mp_ref{nullptr};
+  return guard_rv([&]() -> int {
+    if (!k) return E_BADARG;
+    std::vector<buf_t> parts = bufs_from_cmems(sers);
+    if (parts.size() != 5) return E_FORMAT;
 
-  auto key = std::make_unique<eckey::key_share_mp_t>();
-  if (coinbase::deser(parts[0], key->x_share)) return E_FORMAT;
-  if (coinbase::deser(parts[1], key->Q)) return E_FORMAT;
-  if (coinbase::deser(parts[2], key->Qis)) return E_FORMAT;
-  if (coinbase::deser(parts[3], key->curve)) return E_FORMAT;
-  if (coinbase::deser(parts[4], key->party_name)) return E_FORMAT;
-  *k = mpc_eckey_mp_ref{key.release()};
-  return 0;
+    auto key = std::make_unique<eckey::key_share_mp_t>();
+    if (coinbase::deser(parts[0], key->x_share)) return E_FORMAT;
+    if (coinbase::deser(parts[1], key->Q)) return E_FORMAT;
+    if (coinbase::deser(parts[2], key->Qis)) return E_FORMAT;
+    if (coinbase::deser(parts[3], key->curve)) return E_FORMAT;
+    if (coinbase::deser(parts[4], key->party_name)) return E_FORMAT;
+    *k = mpc_eckey_mp_ref{key.release()};
+    return 0;
+  });
 }
 
 int mpc_ecdsampc_sign(job_mp_ref* j, mpc_eckey_mp_ref* k, cmem_t msg, int sig_receiver, cmem_t* sig_out) {
-  job_mp_t* job = job_of(j);
-  if (!job || !valid_ref(k) || !sig_out) return E_BADARG;
-  *sig_out = cmem_t{nullptr, 0};
+  if (sig_out) *sig_out = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    job_mp_t* job = job_of(j);
+    if (!job || !valid_ref(k) || !sig_out) return E_BADARG;
+    *sig_out = cmem_t{nullptr, 0};
 
-  buf_t sig;
-  if (error_t rv =
-          ecdsampc::sign(*job, *as<ecdsampc::key_t>(k->opaque), view(msg), party_idx_t(sig_receiver), sig))
-    return rv;
-  *sig_out = copy_to_cmem(sig);
-  return 0;
+    buf_t sig;
+    if (error_t rv =
+            ecdsampc::sign(*job, *as<ecdsampc::key_t>(k->opaque), view(msg), party_idx_t(sig_receiver), sig))
+      return rv;
+    return copy_to_cmem_rv(sig, sig_out);
+  });
 }
 
 int mpc_eddsampc_sign(job_mp_ref* j, mpc_eckey_mp_ref* k, cmem_t msg, int sig_receiver, cmem_t* sig_out) {
-  job_mp_t* job = job_of(j);
-  if (!job || !valid_ref(k) || !sig_out) return E_BADARG;
-  *sig_out = cmem_t{nullptr, 0};
+  if (sig_out) *sig_out = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    job_mp_t* job = job_of(j);
+    if (!job || !valid_ref(k) || !sig_out) return E_BADARG;
+    *sig_out = cmem_t{nullptr, 0};
 
-  buf_t sig;
-  if (error_t rv =
-          eddsampc::sign(*job, *as<eddsampc::key_t>(k->opaque), view(msg), party_idx_t(sig_receiver), sig))
-    return rv;
-  *sig_out = copy_to_cmem(sig);
-  return 0;
+    buf_t sig;
+    if (error_t rv =
+            eddsampc::sign(*job, *as<eddsampc::key_t>(k->opaque), view(msg), party_idx_t(sig_receiver), sig))
+      return rv;
+    return copy_to_cmem_rv(sig, sig_out);
+  });
 }
 
 // ===========================================================================
@@ -625,25 +757,31 @@ int mpc_eddsampc_sign(job_mp_ref* j, mpc_eckey_mp_ref* k, cmem_t msg, int sig_re
 // ===========================================================================
 
 int zk_dl_prove(ecc_point_ref* Q, cmem_t w_mem, cmem_t sid_mem, uint64_t aux, cmem_t* proof_out) {
-  if (!valid_ref(Q) || !proof_out) return E_BADARG;
-  coinbase::zk::uc_dl_t zk;
-  zk.prove(*as<ecc_point_t>(Q->opaque), bn_t::from_bin(view(w_mem)), view(sid_mem), aux);
-  *proof_out = copy_to_cmem(coinbase::ser(zk));
-  return 0;
+  if (proof_out) *proof_out = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    if (!valid_ref(Q) || !proof_out) return E_BADARG;
+    coinbase::zk::uc_dl_t zk;
+    zk.prove(*as<ecc_point_t>(Q->opaque), bn_t::from_bin(view(w_mem)), view(sid_mem), aux);
+    return copy_to_cmem_rv(coinbase::ser(zk), proof_out);
+  });
 }
 
 int zk_dl_verify(ecc_point_ref* Q, cmem_t proof, cmem_t sid_mem, uint64_t aux) {
-  if (!valid_ref(Q)) return E_BADARG;
-  coinbase::zk::uc_dl_t zk;
-  if (error_t rv = coinbase::deser(view(proof), zk)) return rv;
-  return zk.verify(*as<ecc_point_t>(Q->opaque), view(sid_mem), aux);
+  return guard_rv([&]() -> int {
+    if (!valid_ref(Q)) return E_BADARG;
+    coinbase::zk::uc_dl_t zk;
+    if (error_t rv = coinbase::deser(view(proof), zk)) return rv;
+    return zk.verify(*as<ecc_point_t>(Q->opaque), view(sid_mem), aux);
+  });
 }
 
 int mpc_agree_random(job_2p_ref* j, int bit_len, cmem_t* out) {
-  job_2p_t* job = job_of(j);
-  if (!job || !out || bit_len <= 0) return NETWORK_PARAM_ERROR;
-  buf_t out_buf;
-  if (error_t rv = agree_random(*job, bit_len, out_buf)) return rv;
-  *out = copy_to_cmem(out_buf);
-  return 0;
+  if (out) *out = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    job_2p_t* job = job_of(j);
+    if (!job || !out || bit_len <= 0) return NETWORK_PARAM_ERROR;
+    buf_t out_buf;
+    if (error_t rv = agree_random(*job, bit_len, out_buf)) return rv;
+    return copy_to_cmem_rv(out_buf, out);
+  });
 }
