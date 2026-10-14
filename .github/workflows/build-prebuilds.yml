@@ -8,7 +8,8 @@ on:
     paths:
       - "cb-mpc-ts/**"
       - "src/**"
-      - "demos-go/cb-mpc-go/internal/cgobinding/**"
+      - "include/**"
+      - "include-internal/**"
       - "cmake/**"
       - "scripts/openssl/**"
       - ".github/workflows/build-prebuilds.yml"
@@ -16,7 +17,8 @@ on:
     paths:
       - "cb-mpc-ts/**"
       - "src/**"
-      - "demos-go/cb-mpc-go/internal/cgobinding/**"
+      - "include/**"
+      - "include-internal/**"
       - "cmake/**"
       - "scripts/openssl/**"
       - ".github/workflows/build-prebuilds.yml"
