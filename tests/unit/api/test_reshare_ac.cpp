@@ -501,3 +501,22 @@ TYPED_TEST(ApiReshareAc, BackupCannotImpersonateDevice) {
   ASSERT_EQ(Api::pub_share(g1.at("iphone"), iphone_Qi), SUCCESS);
   EXPECT_NE(Api::attach(iphone_pub, mac_x, iphone_Qi, grafted), SUCCESS);
 }
+
+// Nested structure: server AND (iphone OR mac). Reshare from 2-of-3 into it; server+device signs, devices alone don't.
+TYPED_TEST(ApiReshareAc, ReshareIntoNestedStructure) {
+  using Api = TypeParam;
+  buf_t Q;
+  const keys_t g0 = dkg_2of3<Api>(Q);
+  const access_structure_t nested = access_structure_t::And(
+      {access_structure_t::leaf(kServer),
+       access_structure_t::Or({access_structure_t::leaf(kIphone), access_structure_t::leaf(kMac)})});
+  keys_t g1;
+  for (auto rv : reshare<Api>(kAll, {kMac, kServer}, additive_shares<Api>(g0, {kMac, kServer}), Q, nested, g1))
+    ASSERT_EQ(rv, SUCCESS);
+  ASSERT_EQ(g1.size(), 3u);
+  EXPECT_TRUE(signs<Api>({kIphone, kServer}, g1, nested, Q));
+  EXPECT_TRUE(signs<Api>({kMac, kServer}, g1, nested, Q));
+  EXPECT_FALSE(signs<Api>({kIphone, kMac}, g1, nested, Q));
+  const keys_t fresh = refresh_all<Api>(kAll, g1, nested);
+  EXPECT_TRUE(signs<Api>({kMac, kServer}, fresh, nested, Q));
+}
