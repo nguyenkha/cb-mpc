@@ -105,8 +105,7 @@ export async function initCbMpcAuto(): Promise<CbMpc> {
   // Try koffi (Node.js or Bun with koffi installed)
   if (typeof process !== "undefined" && process.versions) {
     try {
-      const _require = typeof require !== "undefined" ? require : undefined;
-      _require!.resolve("koffi");
+      // Throws when koffi is not installed or no prebuilt library exists.
       const mpc = await initCbMpcKoffi();
       debug("loaded koffi backend");
       return mpc;
@@ -124,6 +123,12 @@ export async function initCbMpcAuto(): Promise<CbMpc> {
 // ---------------------------------------------------------------------------
 // Error class
 // ---------------------------------------------------------------------------
+
+/** Split a non-negative safe integer into [lo, hi] uint32 halves passed as i32. */
+function splitU64(v: number): [number, number] {
+  if (!Number.isSafeInteger(v) || v < 0) throw new RangeError("aux must be a non-negative safe integer");
+  return [v % 0x100000000 | 0, Math.floor(v / 0x100000000) | 0];
+}
 
 export class CbMpcError extends Error {
   constructor(
@@ -504,11 +509,11 @@ export class CbMpc {
       this.mod.setPointer(keyRef, key as unknown as number);
       const msgsCmems = this.mod.writeCmems(messages);
       // cmems_t size: int + 2 pointers
-      const sigsCmemsSize = 4 + this.mod.POINTER_SIZE * 2;
+      const sigsCmemsSize = this.mod.POINTER_SIZE * 3;
       const sigsCmems = this.mod.malloc(sigsCmemsSize);
 
       const err = await this.mod.callAsync(
-        "mpc_ecdsa2p_sign", jobPtr, sidCmem, keyRef, msgsCmems, sigsCmems,
+        "wasm_mpc_ecdsa2p_sign", jobPtr, sidCmem, keyRef, msgsCmems, sigsCmems,
       );
 
       const sigs = err === 0 ? this.mod.readCmems(sigsCmems) : [];
@@ -599,7 +604,7 @@ export class CbMpc {
   serializeEcdsa2p(key: Ecdsa2pKeyHandle): Uint8Array[] {
     const keyRef = this.mod.allocRef();
     this.mod.setPointer(keyRef, key as unknown as number);
-    const cmemsSize = 4 + this.mod.POINTER_SIZE * 2;
+    const cmemsSize = this.mod.POINTER_SIZE * 3;
     const serCmems = this.mod.malloc(cmemsSize);
 
     const err = this.mod.call("serialize_mpc_ecdsa2p", keyRef, serCmems);
@@ -718,7 +723,7 @@ export class CbMpc {
   serializeEcKey2p(key: EcKey2pHandle): Uint8Array[] {
     const keyRef = this.mod.allocRef();
     this.mod.setPointer(keyRef, key as unknown as number);
-    const cmemsSize = 4 + this.mod.POINTER_SIZE * 2;
+    const cmemsSize = this.mod.POINTER_SIZE * 3;
     const serCmems = this.mod.malloc(cmemsSize);
 
     const err = this.mod.call("serialize_mpc_eckey_2p", keyRef, serCmems);
@@ -803,7 +808,7 @@ export class CbMpc {
       const sidCmem = this.mod.writeCmem(sessionId);
       const newKeyRef = this.mod.allocRef();
 
-      const err = await this.mod.callAsync("mpc_eckey_mp_refresh", jobPtr, sidCmem, keyRef, newKeyRef);
+      const err = await this.mod.callAsync("wasm_mpc_eckey_mp_refresh", jobPtr, sidCmem, keyRef, newKeyRef);
       const newKey = this.mod.readRef(newKeyRef) as unknown as EcKeyMpHandle;
 
       this.mod.free(keyRef);
@@ -844,7 +849,7 @@ export class CbMpc {
   serializeEcKeyMp(key: EcKeyMpHandle): Uint8Array[] {
     const keyRef = this.mod.allocRef();
     this.mod.setPointer(keyRef, key as unknown as number);
-    const cmemsSize = 4 + this.mod.POINTER_SIZE * 2;
+    const cmemsSize = this.mod.POINTER_SIZE * 3;
     const serCmems = this.mod.malloc(cmemsSize);
 
     const err = this.mod.call("serialize_mpc_eckey_mp", keyRef, serCmems);
@@ -902,7 +907,7 @@ export class CbMpc {
       const sigCmem = this.mod.malloc(this.mod.CMEM_SIZE);
 
       const err = await this.mod.callAsync(
-        "mpc_ecdsampc_sign", jobPtr, keyRef, msgCmem, sigReceiver, sigCmem,
+        "wasm_mpc_ecdsampc_sign", jobPtr, keyRef, msgCmem, sigReceiver, sigCmem,
       );
 
       const sig = err === 0 ? this.mod.readCmem(sigCmem) : new Uint8Array(0);
@@ -949,7 +954,7 @@ export class CbMpc {
       const sigCmem = this.mod.malloc(this.mod.CMEM_SIZE);
 
       const err = await this.mod.callAsync(
-        "mpc_eddsampc_sign", jobPtr, keyRef, msgCmem, sigReceiver, sigCmem,
+        "wasm_mpc_eddsampc_sign", jobPtr, keyRef, msgCmem, sigReceiver, sigCmem,
       );
 
       const sig = err === 0 ? this.mod.readCmem(sigCmem) : new Uint8Array(0);
@@ -984,7 +989,7 @@ export class CbMpc {
     const sidCmem = this.mod.writeCmem(sessionId);
     const proofCmem = this.mod.malloc(this.mod.CMEM_SIZE);
 
-    const err = await this.mod.callAsync("zk_dl_prove", qRef, wCmem, sidCmem, aux, proofCmem);
+    const err = await this.mod.callAsync("wasm_zk_dl_prove", qRef, wCmem, sidCmem, ...splitU64(aux), proofCmem);
     const proof = err === 0 ? this.mod.readCmem(proofCmem) : new Uint8Array(0);
 
     this.mod.free(qRef);
@@ -1007,7 +1012,7 @@ export class CbMpc {
     const proofCmem = this.mod.writeCmem(proof);
     const sidCmem = this.mod.writeCmem(sessionId);
 
-    const result = await this.mod.callAsync("zk_dl_verify", qRef, proofCmem, sidCmem, aux);
+    const result = await this.mod.callAsync("wasm_zk_dl_verify", qRef, proofCmem, sidCmem, ...splitU64(aux));
 
     this.mod.free(qRef);
     this.mod.freeCmem(proofCmem);

@@ -211,9 +211,27 @@ export async function createWasmBackend(
       // Node.js / Bun: use require() since cbmpc.js uses var (not export)
       // and "type": "module" makes import() treat .js as ESM
       const { createRequire } = await import("node:module");
-      const _require = createRequire(import.meta.url);
-      const glue = _require("../../cbmpc.js");
-      factory = typeof glue === "function" ? glue : glue.default || glue.createCbMpc;
+      const { fileURLToPath } = await import("node:url");
+      const file = fileURLToPath(new URL("../../cbmpc.js", import.meta.url));
+      const _require = createRequire(file);
+      let glue: any;
+      try {
+        glue = _require(file);
+      } catch {
+        // fall through to the CommonJS evaluation below
+      }
+      factory = typeof glue === "function" ? glue : glue?.default || glue?.createCbMpc;
+      if (typeof factory !== "function") {
+        // Node treats cbmpc.js as ESM (no exports) because of "type": "module";
+        // evaluate the classic glue script as CommonJS instead.
+        const { readFileSync } = await import("node:fs");
+        const { dirname } = await import("node:path");
+        const mod: { exports: any } = { exports: {} };
+        new Function("module", "exports", "require", "__filename", "__dirname", readFileSync(file, "utf8"))(
+          mod, mod.exports, _require, file, dirname(file),
+        );
+        factory = typeof mod.exports === "function" ? mod.exports : mod.exports.default;
+      }
     }
   }
 

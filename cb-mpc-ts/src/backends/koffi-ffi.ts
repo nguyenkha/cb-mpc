@@ -9,6 +9,22 @@
 
 import type { NativeLib } from "./native.js";
 import { NativeBackend, getLibraryPath } from "./native.js";
+import { FFI_SIGNATURES, KOFFI_C_TYPE } from "./ffi-signatures.js";
+
+/**
+ * Load the koffi module from CommonJS or ESM (this package is ESM, where a
+ * global `require` does not exist). The indirection keeps bundlers from
+ * resolving koffi statically.
+ */
+async function loadKoffi(): Promise<any> {
+  let _require: ((id: string) => any) | undefined = typeof require !== "undefined" ? require : undefined;
+  if (!_require) {
+    const moduleName = "node:module";
+    const { createRequire } = await import(/* @vite-ignore */ moduleName);
+    _require = createRequire(import.meta.url);
+  }
+  return _require!("koffi");
+}
 
 class KoffiLib implements NativeLib {
   private lib: any;
@@ -16,118 +32,16 @@ class KoffiLib implements NativeLib {
   private fnCache: Map<string, (...args: any[]) => any> = new Map();
   private registeredCallbacks: any[] = [];
 
-  // Function signatures for all exported C functions
-  private static readonly SIGNATURES: Record<string, string> = {
-    // Platform info
-    native_pointer_size: "int native_pointer_size()",
-    native_cmem_size: "int native_cmem_size()",
-    native_ref_size: "int native_ref_size()",
+  // C prototypes built from the shared signature table (see ffi-signatures.ts).
+  private static readonly SIGNATURES: Record<string, string> = Object.fromEntries(
+    Object.entries(FFI_SIGNATURES).map(([name, s]) => [
+      name,
+      `${KOFFI_C_TYPE[s.returns]} ${name}(${s.args.map((a) => KOFFI_C_TYPE[a]).join(", ")})`,
+    ]),
+  );
 
-    // Memory
-    wasm_alloc: "void* wasm_alloc(int size)",
-    wasm_free: "void wasm_free(void* ptr)",
-    wasm_new_cmem: "void* wasm_new_cmem(void* data, int size)",
-    wasm_free_cmem: "void wasm_free_cmem(void* cmem)",
-    wasm_cmem_data: "void* wasm_cmem_data(void* cmem)",
-    wasm_cmem_size: "int wasm_cmem_size(void* cmem)",
-    wasm_cmems_count: "int wasm_cmems_count(void* cmems)",
-    wasm_cmems_get: "int wasm_cmems_get(void* cmems, int index, void* out)",
-
-    // Entropy
-    wasm_seed_random: "int wasm_seed_random(const void* data, int size)",
-
-    // Transport
-    native_register_transport: "void native_register_transport(void* send_fn, void* recv_fn, void* recv_all_fn)",
-
-    // Curve
-    wasm_new_ecurve: "void wasm_new_ecurve(int curve_code, void* out)",
-    wasm_free_ecurve: "void wasm_free_ecurve(void* ref)",
-    ecurve_get_curve_code: "int ecurve_get_curve_code(void* curve)",
-    wasm_ecurve_generator: "void wasm_ecurve_generator(void* curve, void* out)",
-    wasm_ecurve_order: "void wasm_ecurve_order(void* curve, void* out)",
-    wasm_ecurve_random_scalar: "void wasm_ecurve_random_scalar(void* curve, void* out)",
-    wasm_ecurve_mul_generator: "void wasm_ecurve_mul_generator(void* curve, void* s_data, int s_size, void* out)",
-
-    // Point
-    wasm_free_ecc_point: "void wasm_free_ecc_point(void* ref)",
-    wasm_ecc_point_from_bytes: "void wasm_ecc_point_from_bytes(void* data, int size, void* out)",
-    wasm_ecc_point_to_bytes: "void wasm_ecc_point_to_bytes(void* point, void* out)",
-    wasm_ecc_point_multiply: "void wasm_ecc_point_multiply(void* point, void* s_data, int s_size, void* out)",
-    wasm_ecc_point_add: "void wasm_ecc_point_add(void* p1, void* p2, void* out)",
-    wasm_ecc_point_subtract: "void wasm_ecc_point_subtract(void* p1, void* p2, void* out)",
-    wasm_ecc_point_get_x: "void wasm_ecc_point_get_x(void* point, void* out)",
-    wasm_ecc_point_get_y: "void wasm_ecc_point_get_y(void* point, void* out)",
-    ecc_point_is_zero: "int ecc_point_is_zero(void* point)",
-    ecc_point_equals: "int ecc_point_equals(void* p1, void* p2)",
-
-    // Scalar
-    wasm_bn_add: "void wasm_bn_add(void* a_data, int a_size, void* b_data, int b_size, void* out)",
-    wasm_ec_mod_add: "void wasm_ec_mod_add(void* curve, void* a_data, int a_size, void* b_data, int b_size, void* out)",
-    wasm_bn_from_int64: "void wasm_bn_from_int64(int64_t value, void* out)",
-
-    // Verification
-    wasm_ecc_verify_der: "int wasm_ecc_verify_der(int curve_code, void* pub_data, int pub_size, void* hash_data, int hash_size, void* sig_data, int sig_size)",
-
-    // Job creation
-    wasm_new_job_2p: "void* wasm_new_job_2p(int transport_id, int party_index, const char* pname0, const char* pname1)",
-    wasm_new_job_mp: "void* wasm_new_job_mp(int transport_id, int party_count, int party_index, void* pnames, int pname_count)",
-    free_job_2p: "void free_job_2p(void* job)",
-    free_job_mp: "void free_job_mp(void* job)",
-    is_peer1: "int is_peer1(void* job)",
-    is_peer2: "int is_peer2(void* job)",
-    get_role_index: "int get_role_index(void* job)",
-    get_party_idx: "int get_party_idx(void* job)",
-    get_n_parties: "int get_n_parties(void* job)",
-
-    // ECDSA 2P
-    mpc_ecdsa2p_dkg: "int mpc_ecdsa2p_dkg(void* job, int curve_code, void* key_out)",
-    mpc_ecdsa2p_refresh: "int mpc_ecdsa2p_refresh(void* job, void* key_in, void* key_out)",
-    mpc_ecdsa2p_sign: "int mpc_ecdsa2p_sign(void* job, void* key, void* session_id, int session_id_size, void* msg_hash, int msg_hash_size, void* sig_out)",
-    wasm_free_mpc_ecdsa2p_key: "void wasm_free_mpc_ecdsa2p_key(void* ref)",
-    mpc_ecdsa2p_key_get_role_index: "int mpc_ecdsa2p_key_get_role_index(void* key)",
-    mpc_ecdsa2p_key_get_curve_code: "int mpc_ecdsa2p_key_get_curve_code(void* key)",
-    wasm_mpc_ecdsa2p_key_get_Q: "void wasm_mpc_ecdsa2p_key_get_Q(void* key, void* out)",
-    wasm_mpc_ecdsa2p_key_get_x_share: "void wasm_mpc_ecdsa2p_key_get_x_share(void* key, void* out)",
-
-    // EC Key MP
-    mpc_eckey_mp_dkg: "int mpc_eckey_mp_dkg(void* job, void* curve, void* key_out)",
-    mpc_eckey_mp_refresh: "int mpc_eckey_mp_refresh(void* job, void* key_in, void* session_id, int session_id_size, void* key_out)",
-    wasm_free_mpc_eckey_mp: "void wasm_free_mpc_eckey_mp(void* ref)",
-    wasm_mpc_eckey_mp_get_Q: "void wasm_mpc_eckey_mp_get_Q(void* key, void* out)",
-    mpc_eckey_mp_get_curve: "void* mpc_eckey_mp_get_curve(void* key)",
-    mpc_eckey_mp_get_x_share: "void wasm_mpc_eckey_mp_get_x_share(void* key, void* out)",
-    mpc_eckey_mp_get_party_name: "const char* mpc_eckey_mp_get_party_name(void* key)",
-    serialize_mpc_eckey_mp: "int serialize_mpc_eckey_mp(void* key, void* cmems_out)",
-    deserialize_mpc_eckey_mp: "int deserialize_mpc_eckey_mp(void* parts, int parts_count, void* key_out)",
-    wasm_deserialize_mpc_eckey_mp: "int wasm_deserialize_mpc_eckey_mp(void* parts, void* key_out)",
-    serialize_mpc_ecdsa2p: "int serialize_mpc_ecdsa2p(void* key, void* cmems_out)",
-    deserialize_mpc_ecdsa2p: "int deserialize_mpc_ecdsa2p(void* parts, int parts_count, void* key_out)",
-    wasm_deserialize_mpc_ecdsa2p: "int wasm_deserialize_mpc_ecdsa2p(void* parts, void* key_out)",
-    serialize_mpc_eckey_2p: "int serialize_mpc_eckey_2p(void* key, void* cmems_out)",
-    deserialize_mpc_eckey_2p: "int deserialize_mpc_eckey_2p(void* parts, int parts_count, void* key_out)",
-    wasm_deserialize_mpc_eckey_2p: "int wasm_deserialize_mpc_eckey_2p(void* parts, void* key_out)",
-
-    // ECDSA MP
-    mpc_ecdsampc_sign: "int mpc_ecdsampc_sign(void* job, void* key, void* msg_hash, int msg_hash_size, int sig_receiver, void* sig_out)",
-
-    // EdDSA MP
-    mpc_eddsampc_sign: "int mpc_eddsampc_sign(void* job, void* key, void* msg, int msg_size, int sig_receiver, void* sig_out)",
-
-    // EC Key 2P / Schnorr 2P
-    mpc_eckey_2p_dkg: "int mpc_eckey_2p_dkg(void* job, int curve_code, void* key_out)",
-    wasm_free_mpc_eckey_2p: "void wasm_free_mpc_eckey_2p(void* ref)",
-    mpc_eckey_2p_get_role_index: "int mpc_eckey_2p_get_role_index(void* key)",
-    mpc_eckey_2p_get_curve_code: "int mpc_eckey_2p_get_curve_code(void* key)",
-    wasm_mpc_eckey_2p_get_Q: "void wasm_mpc_eckey_2p_get_Q(void* key, void* out)",
-    wasm_mpc_eckey_2p_get_x_share: "void wasm_mpc_eckey_2p_get_x_share(void* key, void* out)",
-    wasm_mpc_schnorr2p_eddsa_sign: "int wasm_mpc_schnorr2p_eddsa_sign(void* job, void* key, void* msg_data, int msg_size, void* sig_out)",
-  };
-
-  constructor(libPath: string) {
-    // Use indirect require to prevent bundlers from resolving koffi statically
-    const _require = typeof require !== "undefined" ? require : undefined;
-    if (!_require) throw new Error("koffi requires a CommonJS environment (Node.js or Bun)");
-    this.koffi = _require("koffi");
+  constructor(koffi: any, libPath: string) {
+    this.koffi = koffi;
     this.lib = this.koffi.load(libPath);
   }
 
@@ -146,17 +60,14 @@ class KoffiLib implements NativeLib {
   readBuffer(ptr: number, size: number): Uint8Array {
     if (!ptr || size <= 0) return new Uint8Array(0);
     const koffi = this.koffi;
-    // koffi.decode can read raw bytes from a pointer
-    const buf = Buffer.alloc(size);
-    koffi.decode(ptr, koffi.types.uint8, size, buf);
-    return new Uint8Array(buf);
+    // Pointers are plain numbers (intptr_t); decode as a typed uint8 array and copy.
+    return new Uint8Array(koffi.decode(ptr, koffi.array("uint8_t", size, "Typed")));
   }
 
   writeBuffer(ptr: number, data: Uint8Array): void {
     if (!ptr || data.length === 0) return;
     const koffi = this.koffi;
-    // koffi.encode writes bytes to a pointer
-    koffi.encode(ptr, koffi.types.uint8, Array.from(data));
+    koffi.encode(ptr, koffi.array("uint8_t", data.length, "Typed"), data);
   }
 
   readCString(ptr: number): string {
@@ -173,9 +84,9 @@ class KoffiLib implements NativeLib {
     const koffi = this.koffi;
 
     // Define callback types
-    const sendType = koffi.proto("int native_send_cb(int, int, const uint8_t*, int)");
-    const recvType = koffi.proto("int native_recv_cb(int, int, uint8_t**, int*)");
-    const recvAllType = koffi.proto("int native_recv_all_cb(int, const int*, int, uint8_t**, int**, int*)");
+    const sendType = koffi.proto("int native_send_cb(int, int, intptr_t, int)");
+    const recvType = koffi.proto("int native_recv_cb(int, int, intptr_t, intptr_t)");
+    const recvAllType = koffi.proto("int native_recv_all_cb(int, intptr_t, int, intptr_t, intptr_t, intptr_t)");
 
     // Register callbacks
     const sendCb = koffi.register(send, koffi.pointer(sendType));
@@ -183,7 +94,8 @@ class KoffiLib implements NativeLib {
     const recvAllCb = koffi.register(receiveAll, koffi.pointer(recvAllType));
 
     this.registeredCallbacks.push(sendCb, recvCb, recvAllCb);
-    this.fn("native_register_transport")(sendCb, recvCb, recvAllCb);
+    // koffi passes registered callbacks as pointer objects; convert to addresses for intptr_t.
+    this.fn("native_register_transport")(koffi.address(sendCb), koffi.address(recvCb), koffi.address(recvAllCb));
 
     return () => {
       koffi.unregister(sendCb);
@@ -213,7 +125,7 @@ class KoffiLib implements NativeLib {
  */
 export async function createKoffiBackend(libPath?: string): Promise<NativeBackend> {
   const path = libPath || getLibraryPath();
-  const lib = new KoffiLib(path);
+  const lib = new KoffiLib(await loadKoffi(), path);
   const backend = new NativeBackend(lib);
 
   // Seed PRNG

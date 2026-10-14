@@ -6,114 +6,14 @@
  */
 
 import type { NativeLib } from "./native.js";
+import { FFI_SIGNATURES } from "./ffi-signatures.js";
 import { NativeBackend, getLibraryPath } from "./native.js";
 
 // All exported C functions and their signatures for bun:ffi
-const FFI_SYMBOLS = {
-  // Platform info
-  native_pointer_size: { args: [] as const, returns: "i32" as const },
-  native_cmem_size: { args: [] as const, returns: "i32" as const },
-  native_ref_size: { args: [] as const, returns: "i32" as const },
-
-  // Memory
-  wasm_alloc: { args: ["i32"] as const, returns: "ptr" as const },
-  wasm_free: { args: ["ptr"] as const, returns: "void" as const },
-  wasm_new_cmem: { args: ["ptr", "i32"] as const, returns: "ptr" as const },
-  wasm_free_cmem: { args: ["ptr"] as const, returns: "void" as const },
-  wasm_cmem_data: { args: ["ptr"] as const, returns: "ptr" as const },
-  wasm_cmem_size: { args: ["ptr"] as const, returns: "i32" as const },
-  wasm_cmems_count: { args: ["ptr"] as const, returns: "i32" as const },
-  wasm_cmems_get: { args: ["ptr", "i32", "ptr"] as const, returns: "i32" as const },
-
-  // Entropy
-  wasm_seed_random: { args: ["ptr", "i32"] as const, returns: "i32" as const },
-
-  // Transport
-  native_register_transport: { args: ["ptr", "ptr", "ptr"] as const, returns: "void" as const },
-
-  // Curve
-  wasm_new_ecurve: { args: ["i32", "ptr"] as const, returns: "void" as const },
-  wasm_free_ecurve: { args: ["ptr"] as const, returns: "void" as const },
-  ecurve_get_curve_code: { args: ["ptr"] as const, returns: "i32" as const },
-  wasm_ecurve_generator: { args: ["ptr", "ptr"] as const, returns: "void" as const },
-  wasm_ecurve_order: { args: ["ptr", "ptr"] as const, returns: "void" as const },
-  wasm_ecurve_random_scalar: { args: ["ptr", "ptr"] as const, returns: "void" as const },
-  wasm_ecurve_mul_generator: { args: ["ptr", "ptr", "i32", "ptr"] as const, returns: "void" as const },
-
-  // Point
-  wasm_free_ecc_point: { args: ["ptr"] as const, returns: "void" as const },
-  wasm_ecc_point_from_bytes: { args: ["ptr", "i32", "ptr"] as const, returns: "void" as const },
-  wasm_ecc_point_to_bytes: { args: ["ptr", "ptr"] as const, returns: "void" as const },
-  wasm_ecc_point_multiply: { args: ["ptr", "ptr", "i32", "ptr"] as const, returns: "void" as const },
-  wasm_ecc_point_add: { args: ["ptr", "ptr", "ptr"] as const, returns: "void" as const },
-  wasm_ecc_point_subtract: { args: ["ptr", "ptr", "ptr"] as const, returns: "void" as const },
-  wasm_ecc_point_get_x: { args: ["ptr", "ptr"] as const, returns: "void" as const },
-  wasm_ecc_point_get_y: { args: ["ptr", "ptr"] as const, returns: "void" as const },
-  ecc_point_is_zero: { args: ["ptr"] as const, returns: "i32" as const },
-  ecc_point_equals: { args: ["ptr", "ptr"] as const, returns: "i32" as const },
-
-  // Scalar
-  wasm_bn_add: { args: ["ptr", "i32", "ptr", "i32", "ptr"] as const, returns: "void" as const },
-  wasm_ec_mod_add: { args: ["ptr", "ptr", "i32", "ptr", "i32", "ptr"] as const, returns: "void" as const },
-  wasm_bn_from_int64: { args: ["i64", "ptr"] as const, returns: "void" as const },
-
-  // Verification
-  wasm_ecc_verify_der: { args: ["i32", "ptr", "i32", "ptr", "i32", "ptr", "i32"] as const, returns: "i32" as const },
-
-  // Job creation
-  wasm_new_job_2p: { args: ["i32", "i32", "ptr", "ptr"] as const, returns: "ptr" as const },
-  wasm_new_job_mp: { args: ["i32", "i32", "i32", "ptr", "i32"] as const, returns: "ptr" as const },
-  free_job_2p: { args: ["ptr"] as const, returns: "void" as const },
-  free_job_mp: { args: ["ptr"] as const, returns: "void" as const },
-  is_peer1: { args: ["ptr"] as const, returns: "i32" as const },
-  is_peer2: { args: ["ptr"] as const, returns: "i32" as const },
-  get_role_index: { args: ["ptr"] as const, returns: "i32" as const },
-  get_party_idx: { args: ["ptr"] as const, returns: "i32" as const },
-  get_n_parties: { args: ["ptr"] as const, returns: "i32" as const },
-
-  // ECDSA 2P
-  mpc_ecdsa2p_dkg: { args: ["ptr", "i32", "ptr"] as const, returns: "i32" as const },
-  mpc_ecdsa2p_refresh: { args: ["ptr", "ptr", "ptr"] as const, returns: "i32" as const },
-  mpc_ecdsa2p_sign: { args: ["ptr", "ptr", "ptr", "i32", "ptr", "i32", "ptr"] as const, returns: "i32" as const },
-  wasm_free_mpc_ecdsa2p_key: { args: ["ptr"] as const, returns: "void" as const },
-  mpc_ecdsa2p_key_get_role_index: { args: ["ptr"] as const, returns: "i32" as const },
-  mpc_ecdsa2p_key_get_curve_code: { args: ["ptr"] as const, returns: "i32" as const },
-  wasm_mpc_ecdsa2p_key_get_Q: { args: ["ptr", "ptr"] as const, returns: "void" as const },
-  wasm_mpc_ecdsa2p_key_get_x_share: { args: ["ptr", "ptr"] as const, returns: "void" as const },
-
-  // EC Key MP
-  mpc_eckey_mp_dkg: { args: ["ptr", "ptr", "ptr"] as const, returns: "i32" as const },
-  mpc_eckey_mp_refresh: { args: ["ptr", "ptr", "ptr", "i32", "ptr"] as const, returns: "i32" as const },
-  wasm_free_mpc_eckey_mp: { args: ["ptr"] as const, returns: "void" as const },
-  wasm_mpc_eckey_mp_get_Q: { args: ["ptr", "ptr"] as const, returns: "void" as const },
-  mpc_eckey_mp_get_curve: { args: ["ptr"] as const, returns: "ptr" as const },
-  mpc_eckey_mp_get_x_share: { args: ["ptr", "ptr"] as const, returns: "void" as const },
-  mpc_eckey_mp_get_party_name: { args: ["ptr"] as const, returns: "ptr" as const },
-  serialize_mpc_eckey_mp: { args: ["ptr", "ptr"] as const, returns: "i32" as const },
-  deserialize_mpc_eckey_mp: { args: ["ptr", "i32", "ptr"] as const, returns: "i32" as const },
-  wasm_deserialize_mpc_eckey_mp: { args: ["ptr", "ptr"] as const, returns: "i32" as const },
-  serialize_mpc_ecdsa2p: { args: ["ptr", "ptr"] as const, returns: "i32" as const },
-  deserialize_mpc_ecdsa2p: { args: ["ptr", "i32", "ptr"] as const, returns: "i32" as const },
-  wasm_deserialize_mpc_ecdsa2p: { args: ["ptr", "ptr"] as const, returns: "i32" as const },
-  serialize_mpc_eckey_2p: { args: ["ptr", "ptr"] as const, returns: "i32" as const },
-  deserialize_mpc_eckey_2p: { args: ["ptr", "i32", "ptr"] as const, returns: "i32" as const },
-  wasm_deserialize_mpc_eckey_2p: { args: ["ptr", "ptr"] as const, returns: "i32" as const },
-
-  // ECDSA MP
-  mpc_ecdsampc_sign: { args: ["ptr", "ptr", "ptr", "i32", "i32", "ptr"] as const, returns: "i32" as const },
-
-  // EdDSA MP
-  mpc_eddsampc_sign: { args: ["ptr", "ptr", "ptr", "i32", "i32", "ptr"] as const, returns: "i32" as const },
-
-  // EC Key 2P / Schnorr 2P
-  mpc_eckey_2p_dkg: { args: ["ptr", "i32", "ptr"] as const, returns: "i32" as const },
-  wasm_free_mpc_eckey_2p: { args: ["ptr"] as const, returns: "void" as const },
-  mpc_eckey_2p_get_role_index: { args: ["ptr"] as const, returns: "i32" as const },
-  mpc_eckey_2p_get_curve_code: { args: ["ptr"] as const, returns: "i32" as const },
-  wasm_mpc_eckey_2p_get_Q: { args: ["ptr", "ptr"] as const, returns: "void" as const },
-  wasm_mpc_eckey_2p_get_x_share: { args: ["ptr", "ptr"] as const, returns: "void" as const },
-  wasm_mpc_schnorr2p_eddsa_sign: { args: ["ptr", "ptr", "ptr", "i32", "ptr"] as const, returns: "i32" as const },
-} as const;
+// Built from the shared signature table (see ffi-signatures.ts).
+const FFI_SYMBOLS = Object.fromEntries(
+  Object.entries(FFI_SIGNATURES).map(([name, s]) => [name, { args: [...s.args], returns: s.returns }]),
+);
 
 class BunFfiLib implements NativeLib {
   private symbols: Record<string, (...args: any[]) => any>;

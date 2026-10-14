@@ -11,7 +11,7 @@
 
 import type { CbMpcModule } from "../module.js";
 import type { DataTransport } from "../types.js";
-import { resolve, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // ---------------------------------------------------------------------------
 // FFI library abstraction
@@ -245,7 +245,7 @@ export class NativeBackend implements CbMpcModule {
 
     // Use C-side accessor to avoid struct layout dependency
     // For now, manually construct: cmems_t = {int count, uint8_t* data, int* sizes}
-    const cmemsSize = 4 + this.POINTER_SIZE * 2; // int + 2 pointers
+    const cmemsSize = this.POINTER_SIZE * 3; // int (padded to pointer size) + 2 pointers
     const cmemsPtr = this.malloc(cmemsSize);
     this.setI32(cmemsPtr, count);
     this.setPointer(cmemsPtr + this.POINTER_SIZE, dataPtr); // align after int+padding
@@ -367,6 +367,6 @@ export function getLibraryPath(): string {
   const platform = process.platform === "darwin" ? "darwin" : "linux";
   const arch = process.arch === "arm64" ? "arm64" : "x64";
   const ext = platform === "darwin" ? "dylib" : "so";
-  const dir = resolve(__dirname, "..", "..", "prebuilds", `${platform}-${arch}`);
-  return join(dir, `libcbmpc.${ext}`);
+  // import.meta.url works in Node ESM, Bun and bundlers (no __dirname in ESM).
+  return fileURLToPath(new URL(`../../prebuilds/${platform}-${arch}/libcbmpc.${ext}`, import.meta.url));
 }

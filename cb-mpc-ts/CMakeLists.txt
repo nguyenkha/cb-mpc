@@ -152,6 +152,12 @@ set(EXPORTED_FUNCTIONS
   "_serialize_mpc_ecdsa2p"
   "_deserialize_mpc_ecdsa2p"
   "_wasm_deserialize_mpc_ecdsa2p"
+  "_wasm_mpc_ecdsa2p_sign"
+  "_wasm_mpc_eckey_mp_refresh"
+  "_wasm_mpc_ecdsampc_sign"
+  "_wasm_mpc_eddsampc_sign"
+  "_wasm_zk_dl_prove"
+  "_wasm_zk_dl_verify"
   # EC Key MP
   "_mpc_eckey_mp_dkg"
   "_mpc_eckey_mp_refresh"

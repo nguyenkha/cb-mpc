@@ -10,7 +10,9 @@
 
 import { createHash, createPublicKey, verify as nodeVerify } from "node:crypto";
 
-const [oldPath, newPath, newNativeLib] = process.argv.slice(2);
+import { resolve } from "node:path";
+
+const [oldPath, newPath, newNativeLib] = process.argv.slice(2).map((p) => resolve(p));
 const OLD: any = await import(oldPath);
 const NEW: any = await import(newPath);
 const { NID_secp256k1, NID_X9_62_prime256v1, NID_ED25519 } = NEW;

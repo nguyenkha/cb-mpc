@@ -155,10 +155,11 @@ typedef int (*native_receive_fn)(int transport_id, int sender, uint8_t** out_dat
 typedef int (*native_receive_all_fn)(int transport_id, const int* senders, int sender_count,
                                       uint8_t** out_data, int** out_sizes, int* out_count);
 
-// Global function pointers set by JS before protocol calls.
-static native_send_fn g_native_send = nullptr;
-static native_receive_fn g_native_receive = nullptr;
-static native_receive_all_fn g_native_receive_all = nullptr;
+// Per-thread function pointers set by JS before protocol calls. Thread-local so
+// several workers (one MPC party each) can share one loaded library.
+static thread_local native_send_fn g_native_send = nullptr;
+static thread_local native_receive_fn g_native_receive = nullptr;
+static thread_local native_receive_all_fn g_native_receive_all = nullptr;
 
 static int native_send_trampoline(void* ctx, int receiver, cmem_t message) {
   if (!g_native_send) return -1;
@@ -514,6 +515,48 @@ EXPORT
 int wasm_deserialize_mpc_eckey_mp(cmems_t* ser, mpc_eckey_mp_ref* out) {
   if (!ser) return -1;
   return deserialize_mpc_eckey_mp(*ser, out);
+}
+
+// -- Pointer-only wrappers for functions that take cmem_t/cmems_t/uint64_t by
+//    value. FFI layers (bun:ffi, koffi, ccall) can only pass scalars and
+//    pointers portably, so the TS layer calls these instead. --
+
+EXPORT
+int wasm_mpc_ecdsa2p_sign(job_2p_ref* job, cmem_t* sid, mpc_ecdsa2pc_key_ref* key, cmems_t* msgs, cmems_t* sigs) {
+  if (!sid || !msgs) return -1;
+  return mpc_ecdsa2p_sign(job, *sid, key, *msgs, sigs);
+}
+
+EXPORT
+int wasm_mpc_eckey_mp_refresh(job_mp_ref* job, cmem_t* sid, mpc_eckey_mp_ref* key, mpc_eckey_mp_ref* new_key) {
+  if (!sid) return -1;
+  return mpc_eckey_mp_refresh(job, *sid, key, new_key);
+}
+
+EXPORT
+int wasm_mpc_ecdsampc_sign(job_mp_ref* job, mpc_eckey_mp_ref* key, cmem_t* msg, int sig_receiver, cmem_t* sig) {
+  if (!msg) return -1;
+  return mpc_ecdsampc_sign(job, key, *msg, sig_receiver, sig);
+}
+
+EXPORT
+int wasm_mpc_eddsampc_sign(job_mp_ref* job, mpc_eckey_mp_ref* key, cmem_t* msg, int sig_receiver, cmem_t* sig) {
+  if (!msg) return -1;
+  return mpc_eddsampc_sign(job, key, *msg, sig_receiver, sig);
+}
+
+// `aux` is split into two 32-bit halves (a uint64_t argument is not portable
+// through ccall without WASM_BIGINT).
+EXPORT
+int wasm_zk_dl_prove(ecc_point_ref* Q, cmem_t* w, cmem_t* sid, uint32_t aux_lo, uint32_t aux_hi, cmem_t* proof) {
+  if (!w || !sid) return -1;
+  return zk_dl_prove(Q, *w, *sid, (uint64_t(aux_hi) << 32) | aux_lo, proof);
+}
+
+EXPORT
+int wasm_zk_dl_verify(ecc_point_ref* Q, cmem_t* proof, cmem_t* sid, uint32_t aux_lo, uint32_t aux_hi) {
+  if (!proof || !sid) return -1;
+  return zk_dl_verify(Q, *proof, *sid, (uint64_t(aux_hi) << 32) | aux_lo);
 }
 
 }  // extern "C"
