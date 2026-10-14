@@ -931,9 +931,13 @@ int pve_batch_verify(int curve_code, cmem_t ek, cmem_t ciphertext, cmems_t Qs_co
     if (q_bufs.empty()) return E_BADARG;
     // Accept points as serialized by this layer (ecc_point_to_bytes) as well as
     // raw compressed encodings: re-encode the former to what the PVE API parses.
+    // A serialized point tagged with another curve is rejected rather than reinterpreted.
+    const ecurve_t icurve = ecurve_t::find(curve_code);
     for (auto& q : q_bufs) {
       ecc_point_t point;
-      if (!coinbase::deser(mem_t(q), point)) q = point.to_compressed_bin();
+      if (coinbase::deser(mem_t(q), point)) continue;
+      if (point.get_curve() != icurve) return E_BADARG;
+      q = point.to_compressed_bin();
     }
     return coinbase::api::pve::verify_batch(curve, view(ek), view(ciphertext), mems_view(q_bufs), view(label));
   });

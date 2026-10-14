@@ -63,7 +63,7 @@ function roundTrip(mpc: CbMpc, curveCode: number, name: string, xShare: Uint8Arr
   check(!mpc.pveBatchVerify(curveCode, otherEk, ct, [Q], label), "wrong ek rejected");
 
   const [x] = mpc.pveBatchDecrypt(curveCode, dk, ek, ct, label);
-  // Decrypted scalar may drop leading zero bytes; compare as integers.
+  // Decrypted scalar is padded to the order size while xShare may be shorter; compare as integers.
   check(BigInt("0x" + (hex(x) || "0")) === BigInt("0x" + (hex(xShare) || "0")), "decrypts to the original share");
 }
 

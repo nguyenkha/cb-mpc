@@ -142,17 +142,27 @@ ECIES P-256 base PKE, batch, single recipient):
 ```typescript
 const { ek, dk } = mpc.pveGenerateKeypair();           // dk stays with the recipient
 const { xShare } = mpc.ecdsa2pKeyInfo(key);
+const label = new TextEncoder().encode("my-app:backup:<key id>"); // non-empty, domain-separated
 const ct = mpc.pveBatchEncrypt(NID_secp256k1, ek, label, [xShare]);
 
+const curve = mpc.createCurve(NID_secp256k1);
 const Q = mpc.pointToBytes(mpc.mulGenerator(curve, xShare)); // or any trusted copy of x*G
 mpc.pveBatchVerify(NID_secp256k1, ek, ct, [Q], label);  // true, no decryption needed
 
 const [x] = mpc.pveBatchDecrypt(NID_secp256k1, dk, ek, ct, label);
 ```
 
-`pveBatchDecrypt` does not verify first; call `pveBatchVerify` when the
-ciphertext is untrusted. For ECDSA-2P party 0 (P1) a scalar backup is not
-enough to restore the key; see `SECURE_USAGE.md#ecdsa-2p-p1-backup-limitations`.
+Notes:
+- `label` must be non-empty; use a domain-separated value tied to the key.
+- Scalars are big-endian and must be below the curve order (larger values
+  are reduced mod order and round-trip as `x mod order`).
+- `pveBatchVerify` returns `false` both for a bad proof and for malformed input.
+- `pveBatchDecrypt` does not verify first. A restore flow should call
+  `pveBatchVerify` before decrypting, or check `x*G` afterwards.
+- `dk` and decrypted scalars are secrets: overwrite the returned arrays
+  (`.fill(0)`) once they are no longer needed.
+- For ECDSA-2P party 0 (P1) a scalar backup is not enough to restore the key;
+  see [SECURE_USAGE.md](../SECURE_USAGE.md#ecdsa-2p-p1-backup-limitations).
 
 ## Curve Codes
 
