@@ -495,4 +495,25 @@ int wasm_mpc_schnorr2p_eddsa_sign(job_2p_ref* job, mpc_eckey_2p_ref* key,
   return mpc_schnorr2p_eddsa_sign(job, key, msg, sig_out);
 }
 
+// -- Deserialize wrappers (cmems_t by pointer: passing a struct by value is
+//    not portable across FFI ABIs; the old by-value form crashed under bun:ffi) --
+
+EXPORT
+int wasm_deserialize_mpc_ecdsa2p(cmems_t* ser, mpc_ecdsa2pc_key_ref* out) {
+  if (!ser) return -1;
+  return deserialize_mpc_ecdsa2p(*ser, out);
+}
+
+EXPORT
+int wasm_deserialize_mpc_eckey_2p(cmems_t* ser, mpc_eckey_2p_ref* out) {
+  if (!ser) return -1;
+  return deserialize_mpc_eckey_2p(*ser, out);
+}
+
+EXPORT
+int wasm_deserialize_mpc_eckey_mp(cmems_t* ser, mpc_eckey_mp_ref* out) {
+  if (!ser) return -1;
+  return deserialize_mpc_eckey_mp(*ser, out);
+}
+
 }  // extern "C"

@@ -614,7 +614,7 @@ export class CbMpc {
     const serCmems = this.mod.writeCmems(data);
     const keyRef = this.mod.allocRef();
 
-    const err = this.mod.call("deserialize_mpc_ecdsa2p", serCmems, keyRef);
+    const err = this.mod.call("wasm_deserialize_mpc_ecdsa2p", serCmems, keyRef);
     const keyHandle = this.mod.readRef(keyRef) as unknown as Ecdsa2pKeyHandle;
     this.mod.free(keyRef);
     this.mod.freeCmems(serCmems);
@@ -733,7 +733,7 @@ export class CbMpc {
     const serCmems = this.mod.writeCmems(data);
     const keyRef = this.mod.allocRef();
 
-    const err = this.mod.call("deserialize_mpc_eckey_2p", serCmems, keyRef);
+    const err = this.mod.call("wasm_deserialize_mpc_eckey_2p", serCmems, keyRef);
     const keyHandle = this.mod.readRef(keyRef) as unknown as EcKey2pHandle;
     this.mod.free(keyRef);
     this.mod.freeCmems(serCmems);
@@ -859,7 +859,7 @@ export class CbMpc {
     const serCmems = this.mod.writeCmems(data);
     const keyRef = this.mod.allocRef();
 
-    const err = this.mod.call("deserialize_mpc_eckey_mp", serCmems, keyRef);
+    const err = this.mod.call("wasm_deserialize_mpc_eckey_mp", serCmems, keyRef);
     const keyHandle = this.mod.readRef(keyRef) as unknown as EcKeyMpHandle;
     this.mod.free(keyRef);
     this.mod.freeCmems(serCmems);

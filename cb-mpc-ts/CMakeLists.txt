@@ -151,6 +151,7 @@ set(EXPORTED_FUNCTIONS
   "_mpc_ecdsa2p_key_get_curve_code"
   "_serialize_mpc_ecdsa2p"
   "_deserialize_mpc_ecdsa2p"
+  "_wasm_deserialize_mpc_ecdsa2p"
   # EC Key MP
   "_mpc_eckey_mp_dkg"
   "_mpc_eckey_mp_refresh"
@@ -161,6 +162,7 @@ set(EXPORTED_FUNCTIONS
   "_mpc_eckey_mp_get_party_name"
   "_serialize_mpc_eckey_mp"
   "_deserialize_mpc_eckey_mp"
+  "_wasm_deserialize_mpc_eckey_mp"
   # ECDSA MP
   "_mpc_ecdsampc_sign"
   # EdDSA MP
@@ -175,6 +177,7 @@ set(EXPORTED_FUNCTIONS
   "_wasm_mpc_schnorr2p_eddsa_sign"
   "_serialize_mpc_eckey_2p"
   "_deserialize_mpc_eckey_2p"
+  "_wasm_deserialize_mpc_eckey_2p"
   # ZK
   "_zk_dl_prove"
   "_zk_dl_verify"
