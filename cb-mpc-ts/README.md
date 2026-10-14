@@ -204,8 +204,12 @@ Notes:
 
 - Every party in the job must be online; each is a dealer, a member of the new structure, or both. A dealer outside
   the new structure gets an empty array.
-- **Resharing does not revoke old shares.** Any old qualifying set still holds the same key. Delete old blobs and
-  2P keys once every new party has stored its blob, then run `refreshAc`.
+- **Take `publicKey` from your own record** (your 2P key or AC blob, or the wallet's known key), never from a peer
+  or relay message: a dealer that knows the other public shares could otherwise steer the reshare to another key.
+- `acToAdditiveShare` needs a minimal qualifying set (2 of a 2-of-3); a zero-weight member is rejected.
+- **Resharing does not revoke old shares.** Any old qualifying set still holds the same key. A malicious dealer can
+  make one party abort while others succeed: treat the new generation as live only after every party reported
+  success, then delete old blobs and 2P keys and run `refreshAc`.
 - The transport must be authenticated and encrypted end to end: dealers send each party its share directly.
 
 Measured over a real relay: `scripts/relay-bench/` (see the comments there for setup).

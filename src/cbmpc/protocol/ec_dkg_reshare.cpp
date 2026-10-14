@@ -19,6 +19,8 @@ namespace coinbase::mpc::eckey {
 namespace {
 
 // Canonical, unambiguous encoding of the access-structure tree, so every party hashes the same structure.
+// Children are walked in insertion order on purpose: the additive-share conversion also depends on it, so parties
+// that built the "same" tree in a different child order must not agree.
 void encode_ac_node(const node_t* node, std::string& out) {
   out += std::to_string(int(node->type)) + ":" + std::to_string(node->threshold) + ":" +
          std::to_string(node->name.size()) + ":" + node->name + ":" + std::to_string(node->get_n()) + ";";
@@ -31,6 +33,47 @@ void collect_node_names(const node_t* node, std::set<crypto::pname_t>& out) {
 }
 
 }  // namespace
+
+// Checks that a dealer's public node shares are one consistent sharing over the whole tree (every AND node is the
+// sum of its children, every OR child equals its parent, every THRESHOLD node's children lie on one polynomial
+// through it). `verify_share_against_ancestors_pub_data` only checks the receiver's own leaf-to-root path, which for
+// OR / AND trees leaves other parties' public shares unchecked. Node names must already be present in `pub`.
+error_t verify_ac_pub_tree(const node_t* node, const ac_internal_pub_shares_t& pub) {
+  if (node->type == node_e::LEAF) return SUCCESS;
+  crypto::vartime_scope_t vartime_scope;
+  const ecc_point_t& P = pub.at(node->name);
+  const std::vector<node_t*> children = node->get_sorted_children();
+  if (node->type == node_e::AND) {
+    ecc_point_t sum = P.get_curve().infinity();
+    for (const node_t* c : children) sum += pub.at(c->name);
+    if (sum != P) return coinbase::error(E_CRYPTO, "reshare: inconsistent AND node");
+  } else if (node->type == node_e::OR) {
+    for (const node_t* c : children) {
+      if (pub.at(c->name) != P) return coinbase::error(E_CRYPTO, "reshare: inconsistent OR node");
+    }
+  } else if (node->type == node_e::THRESHOLD) {
+    const int t = node->threshold;
+    if (t < 1 || t > int(children.size())) return coinbase::error(E_CRYPTO, "reshare: invalid threshold node");
+    std::vector<ecc_point_t> quorum;
+    std::vector<bn_t> pids;
+    for (int k = 0; k < t; k++) {
+      quorum.push_back(pub.at(children[k]->name));
+      pids.push_back(children[k]->get_pid());
+    }
+    if (crypto::lagrange_interpolate_exponent(0, quorum, pids) != P)
+      return coinbase::error(E_CRYPTO, "reshare: inconsistent THRESHOLD node");
+    for (size_t k = t; k < children.size(); k++) {
+      if (crypto::lagrange_interpolate_exponent(children[k]->get_pid(), quorum, pids) != pub.at(children[k]->name))
+        return coinbase::error(E_CRYPTO, "reshare: inconsistent THRESHOLD node");
+    }
+  } else {
+    return coinbase::error(E_CRYPTO, "reshare: invalid node type");
+  }
+  for (const node_t* c : children) {
+    if (error_t rv = verify_ac_pub_tree(c, pub)) return rv;
+  }
+  return SUCCESS;
+}
 
 error_t key_share_mp_t::reshare_ac(job_mp_t& job, const ecurve_t& curve, buf_t& sid, const crypto::ss::ac_t new_ac,
                                    const party_set_t& dealer_party_set, const ecc_point_t& Q,
@@ -84,8 +127,9 @@ error_t key_share_mp_t::reshare_ac(job_mp_t& job, const ecurve_t& curve, buf_t& 
 
   // All parties must agree on the curve, parties, dealers, expected Q, new structure and sid.
   auto h_consistency = job.uniform_msg<buf256_t>();
-  h_consistency._i = crypto::sha256_t::hash(std::string("cbmpc-ec-reshare-ac-v1"), std::string(curve.get_name()),
-                                            all_pids, dealer_pids, Q, ac_encoding, sid);
+  h_consistency._i =
+      crypto::sha256_t::hash(std::string("cbmpc-ec-reshare-ac-v1"), std::string(curve.get_name()), all_pids,
+                             dealer_pids, Q, uint64_t(ac_encoding.size()), ac_encoding, uint64_t(sid.size()), sid);
   if (rv = job.plain_broadcast(h_consistency)) return coinbase::error(rv, "Failed to broadcast h_consistency");
   for (int j = 0; j < n; j++) {
     if (j == i) continue;
@@ -164,6 +208,8 @@ error_t key_share_mp_t::reshare_ac(job_mp_t& job, const ecurve_t& curve, buf_t& 
         if (rv = curve.check(R)) return coinbase::error(rv, "reshare: R is not on the session curve");
       }
       if (rv = pi_r_all._j.verify(Rs, sid, j)) return coinbase::error(rv, "reshare: dl proof failed");
+      // Every party checks the whole tree, so all honest parties accept the same public shares or abort.
+      if (rv = verify_ac_pub_tree(new_ac.root, pub)) return rv;
 
       if (is_receiver) {
         // Feldman check of the received share against the dealer's committed tree.

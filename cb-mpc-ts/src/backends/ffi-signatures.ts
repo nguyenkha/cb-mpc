@@ -28,6 +28,7 @@ export const FFI_SIGNATURES: Record<string, FfiSignature> = {
   wasm_free: sig("void", "ptr"),
   wasm_new_cmem: sig("ptr", "ptr", "i32"),
   wasm_free_cmem: sig("void", "ptr"),
+  wasm_free_cmems: sig("void", "ptr"),
   wasm_cmem_data: sig("ptr", "ptr"),
   wasm_cmem_size: sig("i32", "ptr"),
   wasm_cmems_count: sig("i32", "ptr"),

@@ -167,7 +167,10 @@ cbmpc_error_t cbmpc_eddsa_mp_attach_private_scalar(cmem_t public_key_blob, cmem_
 // - All parties in `job->party_names` must be online; each is a dealer, a leaf of the new structure, or both.
 // - Dealers pass their additive share (big-endian, at most 64 bytes, reduced mod the curve order); non-dealers pass
 //   `{NULL, 0}`.
-// - Resharing does not revoke the old shares; delete them once the new generation is confirmed.
+// - Every party MUST take `public_key_compressed` from its own trusted record, never from a peer or relay message.
+// - Resharing does not revoke the old shares. Treat the new generation as live only after every party reported
+//   success, then delete the old shares.
+// - For `cbmpc_eddsa_mp_ac_key_to_additive_share`, pass a minimal qualifying quorum (zero-weight members are rejected).
 //
 // Ownership:
 // - On success, parties in the new structure get `out_new_ac_key_blob->data` allocated by the library (free with

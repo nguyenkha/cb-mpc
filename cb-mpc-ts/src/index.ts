@@ -1202,8 +1202,9 @@ export class CbMpc {
     accessStructure: AccessStructure,
     quorumNames: string[],
   ): Promise<Uint8Array> {
+    const acBytes = encodeAccessStructure(accessStructure); // may throw: before any allocation
     return this.withJobMp("dkgAc", transport, partyIndex, partyNames, (job) => {
-      const ac = this.mod.writeCmem(encodeAccessStructure(accessStructure));
+      const ac = this.mod.writeCmem(acBytes);
       const quorum = this.mod.writeCmems(this.encodeNames(quorumNames));
       return this.callForCmem("wasm_mpc_ac_dkg", [job, curveCode, ac, quorum], [ac], [quorum]);
     });
@@ -1218,9 +1219,10 @@ export class CbMpc {
     accessStructure: AccessStructure,
     quorumNames: string[],
   ): Promise<Uint8Array> {
+    const acBytes = encodeAccessStructure(accessStructure); // may throw: before any allocation
     return this.withJobMp("refreshAc", transport, partyIndex, partyNames, (job) => {
       const key = this.mod.writeCmem(keyBlob);
-      const ac = this.mod.writeCmem(encodeAccessStructure(accessStructure));
+      const ac = this.mod.writeCmem(acBytes);
       const quorum = this.mod.writeCmems(this.encodeNames(quorumNames));
       return this.callForCmem("wasm_mpc_ac_refresh", [job, key, ac, quorum], [key, ac], [quorum]);
     });
@@ -1239,9 +1241,10 @@ export class CbMpc {
     message: Uint8Array,
     sigReceiver: number,
   ): Promise<Uint8Array> {
+    const acBytes = encodeAccessStructure(accessStructure); // may throw: before any allocation
     return this.withJobMp("signAc", transport, partyIndex, partyNames, (job) => {
       const key = this.mod.writeCmem(keyBlob);
-      const ac = this.mod.writeCmem(encodeAccessStructure(accessStructure));
+      const ac = this.mod.writeCmem(acBytes);
       const msg = this.mod.writeCmem(message);
       return this.callForCmem("wasm_mpc_ac_sign", [job, key, ac, msg, sigReceiver], [key, ac, msg], []);
     });
@@ -1254,7 +1257,10 @@ export class CbMpc {
    * other parties pass null. All of `partyNames` must be online and each is a dealer, a new party, or both.
    * Returns the new key blob, or an empty array for a dealer outside the new structure.
    *
-   * Old shares are not revoked: delete them once every new party has stored its blob, then run refreshAc.
+   * Every party must take `publicKey` from its own trusted record (its own 2P key / AC blob, or the wallet's known
+   * public key), never from a peer or relay message.
+   * Old shares are not revoked. Treat the new generation as live only after every party reported success; then
+   * delete the old shares and run refreshAc.
    */
   async reshareFromAdditive(
     transport: DataTransport,
@@ -1266,21 +1272,23 @@ export class CbMpc {
     additiveShare: Uint8Array | null,
     newAccessStructure: AccessStructure,
   ): Promise<Uint8Array> {
+    const acBytes = encodeAccessStructure(newAccessStructure); // may throw: before any allocation
     return this.withJobMp("reshareFromAdditive", transport, partyIndex, partyNames, (job) => {
       const Q = this.mod.writeCmem(publicKey);
       const dealers = this.mod.writeCmems(this.encodeNames(dealerNames));
       const x = this.mod.writeCmem(additiveShare ?? new Uint8Array(0));
-      const ac = this.mod.writeCmem(encodeAccessStructure(newAccessStructure));
+      const ac = this.mod.writeCmem(acBytes);
       return this.callForCmem(
         "wasm_mpc_ac_reshare_from_additive", [job, curveCode, Q, dealers, x, ac], [Q, x, ac], [dealers],
       );
     });
   }
 
-  /** This party's additive share for exactly `quorumNames` (Lagrange-weighted). Secret. */
+  /** This party's additive share for exactly `quorumNames`, a minimal qualifying set (Lagrange-weighted). Secret. */
   acToAdditiveShare(keyBlob: Uint8Array, accessStructure: AccessStructure, quorumNames: string[]): Uint8Array {
+    const acBytes = encodeAccessStructure(accessStructure); // may throw: before any allocation
     const key = this.mod.writeCmem(keyBlob);
-    const ac = this.mod.writeCmem(encodeAccessStructure(accessStructure));
+    const ac = this.mod.writeCmem(acBytes);
     const quorum = this.mod.writeCmems(this.encodeNames(quorumNames));
     const out = this.mod.malloc(this.mod.CMEM_SIZE);
     try {

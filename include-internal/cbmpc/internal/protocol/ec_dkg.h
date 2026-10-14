@@ -52,6 +52,10 @@ struct key_share_2p_t {
   static error_t refresh(job_2p_t& job, const key_share_2p_t& key, key_share_2p_t& new_key);
 };
 
+// Fork addition: checks that public node shares (as from `ac_t::share_with_internals`) form one consistent sharing
+// over the whole tree below `node`. All node names of the tree must be present in `pub`.
+error_t verify_ac_pub_tree(const crypto::ss::node_t* node, const crypto::ss::ac_internal_pub_shares_t& pub);
+
 struct key_share_mp_t {
   bn_t x_share;
   ecc_point_t Q;

@@ -29,6 +29,7 @@ class access_structure_decoder_t {
 
   error_t decode(coinbase::api::access_structure_t& out) {
     if (!p_ || p_ == end_) return E_BADARG;
+    if (end_ - p_ > max_encoded_size) return E_RANGE;
     if (error_t rv = node(out, 0)) return rv;
     return p_ == end_ ? SUCCESS : E_BADARG;  // no trailing bytes
   }
@@ -36,6 +37,8 @@ class access_structure_decoder_t {
  private:
   static constexpr int max_depth = 32;
   static constexpr uint32_t max_nodes = 1024;
+  static constexpr long max_encoded_size = 64 * 1024;
+  static constexpr uint32_t max_name_size = 256;
 
   const uint8_t* p_;
   const uint8_t* end_;
@@ -60,7 +63,7 @@ class access_structure_decoder_t {
     if (!u8(type)) return E_BADARG;
     if (type == 1) {
       uint32_t len = 0;
-      if (!u32(len) || uint64_t(end_ - p_) < len) return E_BADARG;
+      if (!u32(len) || len > max_name_size || uint64_t(end_ - p_) < len) return E_BADARG;
       out = ac_t::leaf(std::string_view(reinterpret_cast<const char*>(p_), len));
       p_ += len;
       return SUCCESS;

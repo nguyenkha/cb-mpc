@@ -339,3 +339,37 @@ TEST(ECDKG, ThresholdDkgRejectsDupLeaves) {
 }
 
 }  // namespace
+
+// Fork addition: verify_ac_pub_tree catches a dealt tree whose off-path branch is inconsistent.
+TEST(EcDkgReshare, VerifyPubTreeRejectsInconsistentBranches) {
+  using namespace coinbase::crypto::ss;
+  using coinbase::crypto::bn_t;
+  const auto curve = coinbase::crypto::curve_secp256k1;
+  const auto& q = curve.order();
+  // OR(a, AND(b, THRESHOLD[2](c, d, e)))
+  node_t* root = new node_t(node_e::OR, "", 0,
+                            {new node_t(node_e::LEAF, "a"),
+                             new node_t(node_e::AND, "and", 0,
+                                        {new node_t(node_e::LEAF, "b"),
+                                         new node_t(node_e::THRESHOLD, "th", 2,
+                                                    {new node_t(node_e::LEAF, "c"), new node_t(node_e::LEAF, "d"),
+                                                     new node_t(node_e::LEAF, "e")})})});
+  ac_owned_t ac(root, curve);
+  ac_shares_t shares;
+  ac_internal_shares_t internal;
+  ac_internal_pub_shares_t pub;
+  ASSERT_EQ(ac.share_with_internals(q, bn_t::rand(q), shares, internal, pub), SUCCESS);
+  EXPECT_EQ(coinbase::mpc::eckey::verify_ac_pub_tree(ac.root, pub), SUCCESS);
+
+  // The receiver-path check alone misses it: leaf "a" accepts a tree whose "b" branch is garbage.
+  {
+    auto bad = pub;
+    bad["b"] = bn_t::rand(q) * curve.generator();
+    EXPECT_EQ(ac.verify_share_against_ancestors_pub_data(pub.at(""), shares.at("a"), bad, "a"), SUCCESS);
+  }
+  for (const char* name : {"a", "and", "b", "th", "c", "e"}) {
+    auto bad = pub;
+    bad[name] = bn_t::rand(q) * curve.generator();
+    EXPECT_NE(coinbase::mpc::eckey::verify_ac_pub_tree(ac.root, bad), SUCCESS) << name;
+  }
+}

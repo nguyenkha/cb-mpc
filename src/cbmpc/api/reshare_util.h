@@ -97,6 +97,10 @@ inline error_t ac_key_to_additive_scalar(coinbase::mpc::eckey::key_share_mp_t& a
 
   coinbase::mpc::eckey::key_share_mp_t additive_key;
   if (rv = ac_key.to_additive_share(ac, quorum_names, additive_key)) return rv;
+  // A member beyond the selected qualifying subset (e.g. the third party of a 2-of-3 quorum of three) gets weight 0;
+  // dealing 0 would abort the reshare with an opaque error, so reject it here.
+  if (additive_key.x_share == 0)
+    return coinbase::error(E_BADARG, "quorum member has zero weight; pass a minimal qualifying set");
   out_additive_share_fixed = additive_key.x_share.to_bin(ac_key.curve.order().get_bin_size());
   return SUCCESS;
 }

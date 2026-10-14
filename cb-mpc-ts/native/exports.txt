@@ -12,6 +12,7 @@ _wasm_alloc
 _wasm_free
 _wasm_new_cmem
 _wasm_free_cmem
+_wasm_free_cmems
 _wasm_cmem_data
 _wasm_cmem_size
 _wasm_cmems_count

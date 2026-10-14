@@ -149,9 +149,13 @@ error_t attach_private_scalar(mem_t public_key_blob, mem_t private_scalar_fixed,
 //   modulo the curve order, so an unreduced ECDSA-2P P1 share is accepted). Non-dealers pass an empty buffer.
 // - On success, parties in `new_access_structure` receive an access-structure key blob (usable with `sign_ac` and
 //   `refresh_ac`); dealers outside it get an empty `new_ac_key_blob`.
-// - Resharing does not revoke the old shares: any old qualifying set still reconstructs the same key. Callers must
-//   delete the old key blobs (and old additive shares) once the new generation is confirmed, and should run
-//   `refresh_ac` on the new generation.
+// - Every party MUST take `public_key_compressed` from its own trusted record (dealers: the key they extracted the
+//   share from; a new party without a key: the wallet's known public key / address), never from a peer or relay
+//   message. A dealer that knows its peers' public shares can otherwise steer the honest parties into resharing a
+//   different key, and deleting the old shares afterwards loses the real one.
+// - Resharing does not revoke the old shares: any old qualifying set still reconstructs the same key. A malicious
+//   dealer can make one receiver abort while others succeed, so treat the new generation as live only after every
+//   party reported success; then delete the old key blobs (and old additive shares) and run `refresh_ac`.
 // - `sid` is an in/out session id; callers may pass an empty buffer to let the protocol derive one.
 //
 // Supported curves: `curve_id::p256`, `curve_id::secp256k1`.
@@ -162,6 +166,8 @@ error_t reshare_from_additive(const job_mp_t& job, curve_id curve, buf_t& sid, m
 // Convert this party's access-structure key share into its additive share for `quorum_party_names`
 // (Lagrange-weighted, fixed-length big-endian, curve order size). The additive shares of the parties of exactly that
 // quorum sum to the private key; use them as `reshare_from_additive` input with the same quorum as dealers.
+// The quorum must be a minimal qualifying set (e.g. 2 parties of a 2-of-3); a member that would get weight 0 is
+// rejected with E_BADARG.
 //
 // The output is private key material, like the key blob itself.
 error_t ac_key_to_additive_share(mem_t ac_key_blob, const access_structure_t& access_structure,

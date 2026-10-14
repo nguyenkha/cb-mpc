@@ -8,6 +8,7 @@
 // The native build uses function-pointer registration instead of EM_ASYNC_JS.
 
 #ifdef __EMSCRIPTEN__
+#include <openssl/crypto.h>
 #include <emscripten.h>
 #define EXPORT EMSCRIPTEN_KEEPALIVE
 #else
@@ -238,9 +239,25 @@ cmem_t* wasm_new_cmem(uint8_t* data, int size) {
 EXPORT
 void wasm_free_cmem(cmem_t* cmem) {
   if (cmem) {
+    // Buffers can hold key shares or blobs: wipe before freeing.
+    if (cmem->data && cmem->size > 0) OPENSSL_cleanse(cmem->data, size_t(cmem->size));
     if (cmem->data) free(cmem->data);
     free(cmem);
   }
+}
+
+// Wipes and frees a cmems_t (data, sizes and the struct itself).
+EXPORT
+void wasm_free_cmems(cmems_t* cmems) {
+  if (!cmems) return;
+  if (cmems->data && cmems->sizes && cmems->count > 0) {
+    size_t total = 0;
+    for (int i = 0; i < cmems->count; i++) total += cmems->sizes[i] > 0 ? size_t(cmems->sizes[i]) : 0;
+    OPENSSL_cleanse(cmems->data, total);
+  }
+  free(cmems->data);
+  free(cmems->sizes);
+  free(cmems);
 }
 
 // -- Entropy seeding --

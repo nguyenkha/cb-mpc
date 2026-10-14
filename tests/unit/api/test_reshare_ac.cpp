@@ -520,3 +520,28 @@ TYPED_TEST(ApiReshareAc, ReshareIntoNestedStructure) {
   const keys_t fresh = refresh_all<Api>(kAll, g1, nested);
   EXPECT_TRUE(signs<Api>({kMac, kServer}, fresh, nested, Q));
 }
+
+// A full 2-of-3 quorum as dealers gives one member weight 0: rejected with a clear error at conversion time.
+TYPED_TEST(ApiReshareAc, ZeroWeightQuorumMemberRejected) {
+  using Api = TypeParam;
+  buf_t Q;
+  const keys_t g0 = dkg_2of3<Api>(Q);
+  int rejected = 0;
+  for (auto name : kAll) {
+    buf_t x;
+    rejected += Api::to_additive(g0.at(std::string(name)), kTwoOfThree, kAll, x) == E_BADARG;
+  }
+  EXPECT_EQ(rejected, 1);
+}
+
+// A job party that neither deals nor is in the new structure is rejected.
+TYPED_TEST(ApiReshareAc, BystanderPartyRejected) {
+  using Api = TypeParam;
+  buf_t Q;
+  const keys_t g0 = dkg_2of3<Api>(Q);
+  const names_t pair = {kMac, kServer};
+  keys_t g1;
+  for (auto rv : reshare<Api>(kAll, pair, additive_shares<Api>(g0, pair), Q, threshold_of(2, pair), g1))
+    EXPECT_NE(rv, SUCCESS);
+  EXPECT_TRUE(g1.empty());
+}

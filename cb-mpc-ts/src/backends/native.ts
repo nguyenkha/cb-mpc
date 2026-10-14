@@ -272,12 +272,8 @@ export class NativeBackend implements CbMpcModule {
   }
 
   freeCmems(cmemsPtr: number): void {
-    // Read struct fields and free them
-    const dataPtr = this.getPointer(cmemsPtr + this.POINTER_SIZE);
-    const sizesPtr = this.getPointer(cmemsPtr + this.POINTER_SIZE * 2);
-    if (dataPtr) this.free(dataPtr);
-    if (sizesPtr) this.free(sizesPtr);
-    this.free(cmemsPtr);
+    // Wipes the data (it can hold key shares) and frees data, sizes and the struct.
+    this.lib.fn("wasm_free_cmems")(cmemsPtr);
   }
 
   allocPartyNames(names: string[]): { arrayPtr: number; namePtrs: number[] } {
