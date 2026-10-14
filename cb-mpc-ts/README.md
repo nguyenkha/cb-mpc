@@ -8,6 +8,18 @@ Supports three backends:
 - **bun:ffi** — Bun runtime (native performance)
 - **koffi** — Node.js runtime (native performance)
 
+## Upgrading from 0.1.x
+
+0.3.0 is built on upstream cb-mpc after v0.2.2 (security fixes, including the
+ECDSA-2P signing fix in coinbase/cb-mpc#124). The TypeScript API is unchanged.
+
+- **Keys are compatible**: keys serialized by 0.1.x load and sign in 0.3.0, and
+  keys serialized by 0.3.0 load in 0.1.x.
+- **Protocol messages are not**: upstream changed its zero-knowledge proofs, so a
+  0.1.x party and a 0.3.0 party cannot run DKG, sign or refresh together.
+  Upgrade every party before the next session.
+- 0.3.0 interoperates with upstream's own C API (see `scripts/c-interop`).
+
 ## Installation
 
 ```bash
@@ -141,6 +153,12 @@ const transport: DataTransport = {
   receiveAll: async (senders: number[]): Promise<Uint8Array[]> => { /* ... */ },
 };
 ```
+
+With the native backends (bun:ffi, koffi) the library calls the transport
+synchronously, so a transport must also implement `sendSync`, `receiveSync` and
+`receiveAllSync`, and parties that talk to each other must run on different
+threads (e.g. one worker per party). See `scripts/native-mp` for an example
+using `SharedArrayBuffer` and `Atomics`.
 
 ## Server Architecture
 
