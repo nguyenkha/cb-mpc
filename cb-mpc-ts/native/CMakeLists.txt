@@ -9,8 +9,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(ROOT_DIR ${CMAKE_CURRENT_LIST_DIR}/../..)
 set(SRC_DIR ${ROOT_DIR}/src)
-set(CGO_DIR ${ROOT_DIR}/demos-go/cb-mpc-go/internal/cgobinding)
 set(TS_DIR ${CMAKE_CURRENT_LIST_DIR}/..)
+set(CAPI_DIR ${TS_DIR}/capi)
+set(CAPI_SRCS ${CAPI_DIR}/cbmpc_ts.cpp)
 
 include(${ROOT_DIR}/cmake/macros.cmake)
 include(${ROOT_DIR}/cmake/arch.cmake)
@@ -35,21 +36,7 @@ file(GLOB CORE_SRCS    ${SRC_DIR}/cbmpc/core/*.cpp)
 file(GLOB CRYPTO_SRCS  ${SRC_DIR}/cbmpc/crypto/*.cpp)
 file(GLOB ZK_SRCS      ${SRC_DIR}/cbmpc/zk/*.cpp)
 file(GLOB PROTO_SRCS   ${SRC_DIR}/cbmpc/protocol/*.cpp)
-file(GLOB FFI_SRCS     ${SRC_DIR}/cbmpc/ffi/*.cpp)
 
-set(CGO_SRCS
-  ${CGO_DIR}/ac.cpp
-  ${CGO_DIR}/agree_random.cpp
-  ${CGO_DIR}/curve.cpp
-  ${CGO_DIR}/ecdsa2p.cpp
-  ${CGO_DIR}/ecdsamp.cpp
-  ${CGO_DIR}/eckeymp.cpp
-  ${CGO_DIR}/eddsamp.cpp
-  ${CGO_DIR}/network.cpp
-  ${CGO_DIR}/pve.cpp
-  ${CGO_DIR}/schnorr2p.cpp
-  ${CGO_DIR}/zk.cpp
-)
 
 set(BINDING_SRCS ${TS_DIR}/binding.cpp)
 
@@ -60,25 +47,26 @@ add_library(cbmpc SHARED
   ${CRYPTO_SRCS}
   ${ZK_SRCS}
   ${PROTO_SRCS}
-  ${FFI_SRCS}
-  ${CGO_SRCS}
+  ${CAPI_SRCS}
   ${BINDING_SRCS}
 )
 
 target_include_directories(cbmpc PRIVATE
+  ${ROOT_DIR}/include
+  ${ROOT_DIR}/include-internal
   ${SRC_DIR}
-  ${CGO_DIR}
+  ${CAPI_DIR}
   ${ROOT_DIR}/vendors
 )
 
-# Make CGO symbols visible (they lack __attribute__((visibility("default"))))
-set_source_files_properties(${CGO_SRCS} PROPERTIES
+# Make C ABI symbols visible (they lack __attribute__((visibility("default"))))
+set_source_files_properties(${CAPI_SRCS} PROPERTIES
   COMPILE_FLAGS "-fvisibility=default"
 )
 
 link_openssl(cbmpc)
 
-# Export list — make CGO symbols visible despite -fvisibility=hidden
+# Export list — make C ABI symbols visible despite -fvisibility=hidden
 set(EXPORTS_FILE "${CMAKE_CURRENT_LIST_DIR}/exports.txt")
 
 # Set output name and platform-specific settings

@@ -59,7 +59,7 @@ _wasm_mpc_schnorr2p_eddsa_sign
 _wasm_new_job_2p
 _wasm_new_job_mp
 
-# CGO functions (cgobinding/*.cpp)
+# C ABI functions (capi/cbmpc_ts.cpp)
 _ecurve_get_curve_code
 _ecc_point_is_zero
 _ecc_point_equals

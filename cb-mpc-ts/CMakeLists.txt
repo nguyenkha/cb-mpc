@@ -9,7 +9,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(ROOT_DIR ${CMAKE_CURRENT_LIST_DIR}/..)
 set(SRC_DIR ${ROOT_DIR}/src)
-set(CGO_DIR ${ROOT_DIR}/demos-go/cb-mpc-go/internal/cgobinding)
 
 include(${ROOT_DIR}/cmake/macros.cmake)
 
@@ -17,7 +16,7 @@ include(${ROOT_DIR}/cmake/macros.cmake)
 
 set(CBMPC_OPENSSL_ROOT "$ENV{CBMPC_OPENSSL_ROOT}")
 if(NOT CBMPC_OPENSSL_ROOT)
-  set(CBMPC_OPENSSL_ROOT "/usr/local/opt/openssl@3.2.0-wasm")
+  set(CBMPC_OPENSSL_ROOT "/usr/local/opt/openssl@3.6.4-wasm")
 endif()
 
 set(OPENSSL_INCLUDE "${CBMPC_OPENSSL_ROOT}/include")
@@ -49,22 +48,9 @@ file(GLOB CORE_SRCS    ${SRC_DIR}/cbmpc/core/*.cpp)
 file(GLOB CRYPTO_SRCS  ${SRC_DIR}/cbmpc/crypto/*.cpp)
 file(GLOB ZK_SRCS      ${SRC_DIR}/cbmpc/zk/*.cpp)
 file(GLOB PROTO_SRCS   ${SRC_DIR}/cbmpc/protocol/*.cpp)
-file(GLOB FFI_SRCS     ${SRC_DIR}/cbmpc/ffi/*.cpp)
 
-# CGO binding sources (C API wrappers)
-set(CGO_SRCS
-  ${CGO_DIR}/ac.cpp
-  ${CGO_DIR}/agree_random.cpp
-  ${CGO_DIR}/curve.cpp
-  ${CGO_DIR}/ecdsa2p.cpp
-  ${CGO_DIR}/ecdsamp.cpp
-  ${CGO_DIR}/eckeymp.cpp
-  ${CGO_DIR}/eddsamp.cpp
-  ${CGO_DIR}/network.cpp
-  ${CGO_DIR}/pve.cpp
-  ${CGO_DIR}/schnorr2p.cpp
-  ${CGO_DIR}/zk.cpp
-)
+set(CAPI_DIR ${CMAKE_CURRENT_LIST_DIR}/capi)
+set(CAPI_SRCS ${CAPI_DIR}/cbmpc_ts.cpp)
 
 # WASM-specific binding
 set(WASM_SRCS ${CMAKE_CURRENT_LIST_DIR}/binding.cpp)
@@ -76,14 +62,15 @@ add_executable(cbmpc_wasm
   ${CRYPTO_SRCS}
   ${ZK_SRCS}
   ${PROTO_SRCS}
-  ${FFI_SRCS}
-  ${CGO_SRCS}
+  ${CAPI_SRCS}
   ${WASM_SRCS}
 )
 
 target_include_directories(cbmpc_wasm PRIVATE
+  ${ROOT_DIR}/include
+  ${ROOT_DIR}/include-internal
   ${SRC_DIR}
-  ${CGO_DIR}
+  ${CAPI_DIR}
   ${OPENSSL_INCLUDE}
   ${ROOT_DIR}/vendors
 )

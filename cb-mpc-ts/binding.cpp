@@ -1,6 +1,6 @@
 // Binding layer for cb-mpc.
 //
-// This file bridges the C API (from cgobinding/) to JavaScript runtimes.
+// This file bridges the C ABI (capi/cbmpc_ts.h) to JavaScript runtimes.
 // It supports two build modes:
 //   1. WASM (Emscripten): uses ASYNCIFY for async JS transport callbacks
 //   2. Native shared library (.dylib/.so): loaded via FFI (koffi)
@@ -19,7 +19,7 @@
 #include <cstdlib>
 #include <cstring>
 
-#include <cbmpc/core/cmem.h>
+#include <cbmpc/c_api/cmem.h>
 
 // ---------------------------------------------------------------------------
 // Entropy seeding
@@ -47,18 +47,8 @@ int getentropy(void* buffer, size_t length) {
 }
 #endif // __EMSCRIPTEN__
 
-// Pull in the CGO C headers so their symbols are linked.
-#include "ac.h"
-#include "agree_random.h"
-#include "curve.h"
-#include "ecdsa2p.h"
-#include "ecdsamp.h"
-#include "eckeymp.h"
-#include "eddsamp.h"
-#include "network.h"
-#include "pve.h"
-#include "schnorr2p.h"
-#include "zk.h"
+// C ABI implemented in capi/cbmpc_ts.cpp.
+#include "cbmpc_ts.h"
 
 // ---------------------------------------------------------------------------
 // Transport callbacks

@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 #
-# Build a static OpenSSL 3.2.0 for WebAssembly using Emscripten.
+# Build a static OpenSSL 3.6.4 for WebAssembly using Emscripten.
 #
 # Prerequisites:
 #   - Emscripten SDK (emsdk) installed and activated
 #   - EMSDK environment variable set (e.g., source emsdk_env.sh)
 #
-# The output is installed to ${CBMPC_OPENSSL_ROOT:-/usr/local/opt/openssl@3.2.0-wasm}.
+# The output is installed to ${CBMPC_OPENSSL_ROOT:-/usr/local/opt/openssl@3.6.4-wasm}.
 
 set -euo pipefail
 
-OPENSSL_VERSION="3.2.0"
-OPENSSL_SHA256="14c826f07c7e433706fb5c69fa9e25dab95684844b4c962a2cf1bf183eb4690e"
-INSTALL_PREFIX="${CBMPC_OPENSSL_ROOT:-/usr/local/opt/openssl@3.2.0-wasm}"
+OPENSSL_VERSION="3.6.4"
+OPENSSL_SHA256="9bffaa1ad1e07b354c21bd3324ec02fa15579f45a7d0494b3e74bc449b7333ef"
+INSTALL_PREFIX="${CBMPC_OPENSSL_ROOT:-/usr/local/opt/openssl@3.6.4-wasm}"
 
 # Verify Emscripten is available
 if ! command -v emcc &>/dev/null; then
