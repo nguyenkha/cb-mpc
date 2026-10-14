@@ -160,13 +160,18 @@ export class CbMpc {
   /** @internal */
   constructor(private readonly mod: CbMpcModule) {}
 
+  /** Call a value-returning wrapper that reports failure as a non-zero status. */
+  private callChecked(name: string, ...args: number[]): void {
+    checkError(this.mod.call(name, ...args) as number, name);
+  }
+
   // =========================================================================
   // Curve operations
   // =========================================================================
 
   createCurve(curveCode: number): CurveHandle {
     const outPtr = this.mod.allocRef();
-    this.mod.call("wasm_new_ecurve", curveCode, outPtr);
+    this.callChecked("wasm_new_ecurve", curveCode, outPtr);
     const handle = this.mod.readRef(outPtr);
     this.mod.free(outPtr);
     return handle as unknown as CurveHandle;
@@ -183,7 +188,7 @@ export class CbMpc {
     const curveRef = this.mod.allocRef();
     this.mod.setPointer(curveRef, curve as unknown as number);
     const outPtr = this.mod.allocRef();
-    this.mod.call("wasm_ecurve_generator", curveRef, outPtr);
+    this.callChecked("wasm_ecurve_generator", curveRef, outPtr);
     const handle = this.mod.readRef(outPtr);
     this.mod.free(curveRef);
     this.mod.free(outPtr);
@@ -194,7 +199,7 @@ export class CbMpc {
     const curveRef = this.mod.allocRef();
     this.mod.setPointer(curveRef, curve as unknown as number);
     const cmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.mod.call("wasm_ecurve_order", curveRef, cmemOut);
+    this.callChecked("wasm_ecurve_order", curveRef, cmemOut);
     const result = this.mod.readCmem(cmemOut);
     this.mod.freeCmem(cmemOut);
     this.mod.free(curveRef);
@@ -213,7 +218,7 @@ export class CbMpc {
     const curveRef = this.mod.allocRef();
     this.mod.setPointer(curveRef, curve as unknown as number);
     const cmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.mod.call("wasm_ecurve_random_scalar", curveRef, cmemOut);
+    this.callChecked("wasm_ecurve_random_scalar", curveRef, cmemOut);
     const result = this.mod.readCmem(cmemOut);
     this.mod.freeCmem(cmemOut);
     this.mod.free(curveRef);
@@ -227,7 +232,7 @@ export class CbMpc {
   pointFromBytes(data: Uint8Array): PointHandle {
     const dataPtr = this.mod.writeBytes(data);
     const outPtr = this.mod.allocRef();
-    this.mod.call("wasm_ecc_point_from_bytes", dataPtr, data.length, outPtr);
+    this.callChecked("wasm_ecc_point_from_bytes", dataPtr, data.length, outPtr);
     const handle = this.mod.readRef(outPtr);
     this.mod.free(outPtr);
     this.mod.free(dataPtr);
@@ -238,7 +243,7 @@ export class CbMpc {
     const refPtr = this.mod.allocRef();
     this.mod.setPointer(refPtr, point as unknown as number);
     const cmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.mod.call("wasm_ecc_point_to_bytes", refPtr, cmemOut);
+    this.callChecked("wasm_ecc_point_to_bytes", refPtr, cmemOut);
     const result = this.mod.readCmem(cmemOut);
     this.mod.freeCmem(cmemOut);
     this.mod.free(refPtr);
@@ -249,7 +254,7 @@ export class CbMpc {
     const refPtr = this.mod.allocRef();
     this.mod.setPointer(refPtr, point as unknown as number);
     const cmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.mod.call("wasm_ecc_point_get_x", refPtr, cmemOut);
+    this.callChecked("wasm_ecc_point_get_x", refPtr, cmemOut);
     const result = this.mod.readCmem(cmemOut);
     this.mod.freeCmem(cmemOut);
     this.mod.free(refPtr);
@@ -260,7 +265,7 @@ export class CbMpc {
     const refPtr = this.mod.allocRef();
     this.mod.setPointer(refPtr, point as unknown as number);
     const cmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.mod.call("wasm_ecc_point_get_y", refPtr, cmemOut);
+    this.callChecked("wasm_ecc_point_get_y", refPtr, cmemOut);
     const result = this.mod.readCmem(cmemOut);
     this.mod.freeCmem(cmemOut);
     this.mod.free(refPtr);
@@ -276,7 +281,7 @@ export class CbMpc {
     this.mod.setPointer(refPtr, point as unknown as number);
     const sPtr = this.mod.writeBytes(scalar);
     const outPtr = this.mod.allocRef();
-    this.mod.call("wasm_ecc_point_multiply", refPtr, sPtr, scalar.length, outPtr);
+    this.callChecked("wasm_ecc_point_multiply", refPtr, sPtr, scalar.length, outPtr);
     const handle = this.mod.readRef(outPtr);
     this.mod.free(refPtr);
     this.mod.free(sPtr);
@@ -290,7 +295,7 @@ export class CbMpc {
     this.mod.setPointer(ref1, p1 as unknown as number);
     this.mod.setPointer(ref2, p2 as unknown as number);
     const outPtr = this.mod.allocRef();
-    this.mod.call("wasm_ecc_point_add", ref1, ref2, outPtr);
+    this.callChecked("wasm_ecc_point_add", ref1, ref2, outPtr);
     const handle = this.mod.readRef(outPtr);
     this.mod.free(ref1);
     this.mod.free(ref2);
@@ -304,7 +309,7 @@ export class CbMpc {
     this.mod.setPointer(ref1, p1 as unknown as number);
     this.mod.setPointer(ref2, p2 as unknown as number);
     const outPtr = this.mod.allocRef();
-    this.mod.call("wasm_ecc_point_subtract", ref1, ref2, outPtr);
+    this.callChecked("wasm_ecc_point_subtract", ref1, ref2, outPtr);
     const handle = this.mod.readRef(outPtr);
     this.mod.free(ref1);
     this.mod.free(ref2);
@@ -343,7 +348,7 @@ export class CbMpc {
     this.mod.setPointer(curveRef, curve as unknown as number);
     const sPtr = this.mod.writeBytes(scalar);
     const outPtr = this.mod.allocRef();
-    this.mod.call("wasm_ecurve_mul_generator", curveRef, sPtr, scalar.length, outPtr);
+    this.callChecked("wasm_ecurve_mul_generator", curveRef, sPtr, scalar.length, outPtr);
     const handle = this.mod.readRef(outPtr);
     this.mod.free(curveRef);
     this.mod.free(sPtr);
@@ -390,7 +395,7 @@ export class CbMpc {
     const aPtr = this.mod.writeBytes(a);
     const bPtr = this.mod.writeBytes(b);
     const cmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.mod.call("wasm_bn_add", aPtr, a.length, bPtr, b.length, cmemOut);
+    this.callChecked("wasm_bn_add", aPtr, a.length, bPtr, b.length, cmemOut);
     const result = this.mod.readCmem(cmemOut);
     this.mod.freeCmem(cmemOut);
     this.mod.free(aPtr);
@@ -404,7 +409,7 @@ export class CbMpc {
     const aPtr = this.mod.writeBytes(a);
     const bPtr = this.mod.writeBytes(b);
     const cmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.mod.call("wasm_ec_mod_add", curveRef, aPtr, a.length, bPtr, b.length, cmemOut);
+    this.callChecked("wasm_ec_mod_add", curveRef, aPtr, a.length, bPtr, b.length, cmemOut);
     const result = this.mod.readCmem(cmemOut);
     this.mod.freeCmem(cmemOut);
     this.mod.free(curveRef);
@@ -433,7 +438,7 @@ export class CbMpc {
 
   private extractPublicKey(getQFn: string, keyRef: number): Uint8Array {
     const qOut = this.mod.allocRef();
-    this.mod.call(getQFn, keyRef, qOut);
+    this.callChecked(getQFn, keyRef, qOut);
     const qHandle = this.mod.readRef(qOut);
     this.mod.free(qOut);
     const qRef = this.mod.allocRef();
@@ -449,7 +454,7 @@ export class CbMpc {
 
   private extractXShare(getXShareFn: string, keyRef: number): Uint8Array {
     const xCmemOut = this.mod.malloc(this.mod.CMEM_SIZE);
-    this.mod.call(getXShareFn, keyRef, xCmemOut);
+    this.callChecked(getXShareFn, keyRef, xCmemOut);
     const xShare = this.mod.readCmem(xCmemOut);
     this.mod.freeCmem(xCmemOut);
     return xShare;
@@ -469,19 +474,20 @@ export class CbMpc {
     const name0 = this.mod.allocString(partyNames[0]);
     const name1 = this.mod.allocString(partyNames[1]);
 
+    let jobPtr = 0;
     try {
-      const jobPtr = this.mod.call("wasm_new_job_2p", transportId, partyIndex, name0, name1);
+      jobPtr = this.mod.call("wasm_new_job_2p", transportId, partyIndex, name0, name1);
       if (!jobPtr) throw new CbMpcError(-1, "ecdsa2pDkg: failed to create job");
 
       const keyRef = this.mod.allocRef();
       const err = await this.mod.callAsync("mpc_ecdsa2p_dkg", jobPtr, curveCode, keyRef);
       const keyHandle = this.mod.readRef(keyRef) as unknown as Ecdsa2pKeyHandle;
       this.mod.free(keyRef);
-      this.mod.call("free_job_2p", jobPtr);
 
       checkError(err, "ecdsa2pDkg");
       return keyHandle;
     } finally {
+      if (jobPtr) this.mod.call("free_job_2p", jobPtr);
       this.mod.free(name0);
       this.mod.free(name1);
       this.unregisterTransport(transportId);
@@ -500,8 +506,9 @@ export class CbMpc {
     const name0 = this.mod.allocString(partyNames[0]);
     const name1 = this.mod.allocString(partyNames[1]);
 
+    let jobPtr = 0;
     try {
-      const jobPtr = this.mod.call("wasm_new_job_2p", transportId, partyIndex, name0, name1);
+      jobPtr = this.mod.call("wasm_new_job_2p", transportId, partyIndex, name0, name1);
       if (!jobPtr) throw new CbMpcError(-1, "ecdsa2pSign: failed to create job");
 
       const sidCmem = this.mod.writeCmem(sessionId);
@@ -522,11 +529,11 @@ export class CbMpc {
       this.mod.freeCmem(sidCmem);
       this.mod.freeCmems(msgsCmems);
       this.mod.freeCmems(sigsCmems);
-      this.mod.call("free_job_2p", jobPtr);
 
       checkError(err, "ecdsa2pSign");
       return sigs;
     } finally {
+      if (jobPtr) this.mod.call("free_job_2p", jobPtr);
       this.mod.free(name0);
       this.mod.free(name1);
       this.unregisterTransport(transportId);
@@ -543,8 +550,9 @@ export class CbMpc {
     const name0 = this.mod.allocString(partyNames[0]);
     const name1 = this.mod.allocString(partyNames[1]);
 
+    let jobPtr = 0;
     try {
-      const jobPtr = this.mod.call("wasm_new_job_2p", transportId, partyIndex, name0, name1);
+      jobPtr = this.mod.call("wasm_new_job_2p", transportId, partyIndex, name0, name1);
       if (!jobPtr) throw new CbMpcError(-1, "ecdsa2pRefresh: failed to create job");
 
       const keyRef = this.mod.allocRef();
@@ -556,11 +564,11 @@ export class CbMpc {
 
       this.mod.free(keyRef);
       this.mod.free(newKeyRef);
-      this.mod.call("free_job_2p", jobPtr);
 
       checkError(err, "ecdsa2pRefresh");
       return newKey;
     } finally {
+      if (jobPtr) this.mod.call("free_job_2p", jobPtr);
       this.mod.free(name0);
       this.mod.free(name1);
       this.unregisterTransport(transportId);
@@ -641,19 +649,20 @@ export class CbMpc {
     const name0 = this.mod.allocString(partyNames[0]);
     const name1 = this.mod.allocString(partyNames[1]);
 
+    let jobPtr = 0;
     try {
-      const jobPtr = this.mod.call("wasm_new_job_2p", transportId, partyIndex, name0, name1);
+      jobPtr = this.mod.call("wasm_new_job_2p", transportId, partyIndex, name0, name1);
       if (!jobPtr) throw new CbMpcError(-1, "ecKey2pDkg: failed to create job");
 
       const keyRef = this.mod.allocRef();
       const err = await this.mod.callAsync("mpc_eckey_2p_dkg", jobPtr, curveCode, keyRef);
       const keyHandle = this.mod.readRef(keyRef) as unknown as EcKey2pHandle;
       this.mod.free(keyRef);
-      this.mod.call("free_job_2p", jobPtr);
 
       checkError(err, "ecKey2pDkg");
       return keyHandle;
     } finally {
+      if (jobPtr) this.mod.call("free_job_2p", jobPtr);
       this.mod.free(name0);
       this.mod.free(name1);
       this.unregisterTransport(transportId);
@@ -671,8 +680,9 @@ export class CbMpc {
     const name0 = this.mod.allocString(partyNames[0]);
     const name1 = this.mod.allocString(partyNames[1]);
 
+    let jobPtr = 0;
     try {
-      const jobPtr = this.mod.call("wasm_new_job_2p", transportId, partyIndex, name0, name1);
+      jobPtr = this.mod.call("wasm_new_job_2p", transportId, partyIndex, name0, name1);
       if (!jobPtr) throw new CbMpcError(-1, "schnorr2pEddsaSign: failed to create job");
 
       const keyRef = this.mod.allocRef();
@@ -689,11 +699,11 @@ export class CbMpc {
       this.mod.free(keyRef);
       this.mod.free(msgPtr);
       this.mod.freeCmem(sigCmem);
-      this.mod.call("free_job_2p", jobPtr);
 
       checkError(err, "schnorr2pEddsaSign");
       return sig;
     } finally {
+      if (jobPtr) this.mod.call("free_job_2p", jobPtr);
       this.mod.free(name0);
       this.mod.free(name1);
       this.unregisterTransport(transportId);
@@ -760,8 +770,9 @@ export class CbMpc {
     const transportId = this.registerTransport(transport);
     const { arrayPtr: namesArray, namePtrs } = this.mod.allocPartyNames(partyNames);
 
+    let jobPtr = 0;
     try {
-      const jobPtr = this.mod.call(
+      jobPtr = this.mod.call(
         "wasm_new_job_mp", transportId, partyCount, partyIndex, namesArray, partyNames.length,
       );
       if (!jobPtr) throw new CbMpcError(-1, "ecKeyMpDkg: failed to create job");
@@ -775,11 +786,11 @@ export class CbMpc {
 
       this.mod.free(curveRef);
       this.mod.free(keyRef);
-      this.mod.call("free_job_mp", jobPtr);
 
       checkError(err, "ecKeyMpDkg");
       return keyHandle;
     } finally {
+      if (jobPtr) this.mod.call("free_job_mp", jobPtr);
       for (const p of namePtrs) this.mod.free(p);
       this.mod.free(namesArray);
       this.unregisterTransport(transportId);
@@ -797,8 +808,9 @@ export class CbMpc {
     const transportId = this.registerTransport(transport);
     const { arrayPtr: namesArray, namePtrs } = this.mod.allocPartyNames(partyNames);
 
+    let jobPtr = 0;
     try {
-      const jobPtr = this.mod.call(
+      jobPtr = this.mod.call(
         "wasm_new_job_mp", transportId, partyCount, partyIndex, namesArray, partyNames.length,
       );
       if (!jobPtr) throw new CbMpcError(-1, "ecKeyMpRefresh: failed to create job");
@@ -814,11 +826,11 @@ export class CbMpc {
       this.mod.free(keyRef);
       this.mod.free(newKeyRef);
       this.mod.freeCmem(sidCmem);
-      this.mod.call("free_job_mp", jobPtr);
 
       checkError(err, "ecKeyMpRefresh");
       return newKey;
     } finally {
+      if (jobPtr) this.mod.call("free_job_mp", jobPtr);
       for (const p of namePtrs) this.mod.free(p);
       this.mod.free(namesArray);
       this.unregisterTransport(transportId);
@@ -895,8 +907,9 @@ export class CbMpc {
     const transportId = this.registerTransport(transport);
     const { arrayPtr: namesArray, namePtrs } = this.mod.allocPartyNames(partyNames);
 
+    let jobPtr = 0;
     try {
-      const jobPtr = this.mod.call(
+      jobPtr = this.mod.call(
         "wasm_new_job_mp", transportId, partyCount, partyIndex, namesArray, partyNames.length,
       );
       if (!jobPtr) throw new CbMpcError(-1, "ecdsaMpSign: failed to create job");
@@ -915,11 +928,11 @@ export class CbMpc {
       this.mod.free(keyRef);
       this.mod.freeCmem(msgCmem);
       this.mod.freeCmem(sigCmem);
-      this.mod.call("free_job_mp", jobPtr);
 
       checkError(err, "ecdsaMpSign");
       return sig;
     } finally {
+      if (jobPtr) this.mod.call("free_job_mp", jobPtr);
       for (const p of namePtrs) this.mod.free(p);
       this.mod.free(namesArray);
       this.unregisterTransport(transportId);
@@ -942,8 +955,9 @@ export class CbMpc {
     const transportId = this.registerTransport(transport);
     const { arrayPtr: namesArray, namePtrs } = this.mod.allocPartyNames(partyNames);
 
+    let jobPtr = 0;
     try {
-      const jobPtr = this.mod.call(
+      jobPtr = this.mod.call(
         "wasm_new_job_mp", transportId, partyCount, partyIndex, namesArray, partyNames.length,
       );
       if (!jobPtr) throw new CbMpcError(-1, "eddsaMpSign: failed to create job");
@@ -962,11 +976,11 @@ export class CbMpc {
       this.mod.free(keyRef);
       this.mod.freeCmem(msgCmem);
       this.mod.freeCmem(sigCmem);
-      this.mod.call("free_job_mp", jobPtr);
 
       checkError(err, "eddsaMpSign");
       return sig;
     } finally {
+      if (jobPtr) this.mod.call("free_job_mp", jobPtr);
       for (const p of namePtrs) this.mod.free(p);
       this.mod.free(namesArray);
       this.unregisterTransport(transportId);
@@ -1037,8 +1051,9 @@ export class CbMpc {
     const name0 = this.mod.allocString(partyNames[0]);
     const name1 = this.mod.allocString(partyNames[1]);
 
+    let jobPtr = 0;
     try {
-      const jobPtr = this.mod.call("wasm_new_job_2p", transportId, partyIndex, name0, name1);
+      jobPtr = this.mod.call("wasm_new_job_2p", transportId, partyIndex, name0, name1);
       if (!jobPtr) throw new CbMpcError(-1, "agreeRandom: failed to create job");
 
       const outCmem = this.mod.malloc(this.mod.CMEM_SIZE);
@@ -1046,11 +1061,11 @@ export class CbMpc {
       const result = err === 0 ? this.mod.readCmem(outCmem) : new Uint8Array(0);
 
       this.mod.freeCmem(outCmem);
-      this.mod.call("free_job_2p", jobPtr);
 
       checkError(err, "agreeRandom");
       return result;
     } finally {
+      if (jobPtr) this.mod.call("free_job_2p", jobPtr);
       this.mod.free(name0);
       this.mod.free(name1);
       this.unregisterTransport(transportId);

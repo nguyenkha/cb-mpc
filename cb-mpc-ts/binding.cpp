@@ -204,6 +204,14 @@ static const data_transport_callbacks_t native_callbacks = {
 // WASM-exported helpers
 // ---------------------------------------------------------------------------
 
+// Runs a value-returning C ABI call and reports its recorded error (0 = ok).
+template <typename F>
+static int checked(F&& f) {
+  cbmpc_ts_take_last_error();
+  f();
+  return cbmpc_ts_take_last_error();
+}
+
 extern "C" {
 
 // -- Platform info (struct sizes for FFI) --
@@ -354,101 +362,103 @@ void wasm_free_mpc_eckey_mp(mpc_eckey_mp_ref* ref) {
 // -- Curve wrappers --
 
 EXPORT
-void wasm_new_ecurve(int curve_code, ecurve_ref* out) {
-  *out = new_ecurve(curve_code);
+int wasm_new_ecurve(int curve_code, ecurve_ref* out) {
+  return checked([&] { *out = new_ecurve(curve_code); });
 }
 
 EXPORT
-void wasm_ecurve_generator(ecurve_ref* curve, ecc_point_ref* out) {
-  *out = ecurve_generator(curve);
+int wasm_ecurve_generator(ecurve_ref* curve, ecc_point_ref* out) {
+  return checked([&] { *out = ecurve_generator(curve); });
 }
 
 EXPORT
-void wasm_ecurve_order(ecurve_ref* curve, cmem_t* out) {
-  *out = ecurve_order(curve);
+int wasm_ecurve_order(ecurve_ref* curve, cmem_t* out) {
+  return checked([&] { *out = ecurve_order(curve); });
 }
 
 EXPORT
-void wasm_ecurve_random_scalar(ecurve_ref* curve, cmem_t* out) {
-  *out = ecurve_random_scalar(curve);
+int wasm_ecurve_random_scalar(ecurve_ref* curve, cmem_t* out) {
+  return checked([&] { *out = ecurve_random_scalar(curve); });
 }
 
 EXPORT
-void wasm_ecurve_mul_generator(ecurve_ref* curve, uint8_t* s_data, int s_size, ecc_point_ref* out) {
+int wasm_ecurve_mul_generator(ecurve_ref* curve, uint8_t* s_data, int s_size, ecc_point_ref* out) {
   cmem_t scalar = {s_data, s_size};
-  *out = ecurve_mul_generator(curve, scalar);
+  return checked([&] { *out = ecurve_mul_generator(curve, scalar); });
 }
 
 // -- Point wrappers --
 
 EXPORT
-void wasm_ecc_point_from_bytes(uint8_t* data, int size, ecc_point_ref* out) {
+int wasm_ecc_point_from_bytes(uint8_t* data, int size, ecc_point_ref* out) {
   cmem_t point_bytes = {data, size};
-  *out = ecc_point_from_bytes(point_bytes);
+  return checked([&] { *out = ecc_point_from_bytes(point_bytes); });
 }
 
 EXPORT
-void wasm_ecc_point_to_bytes(ecc_point_ref* point, cmem_t* out) {
-  *out = ecc_point_to_bytes(point);
+int wasm_ecc_point_to_bytes(ecc_point_ref* point, cmem_t* out) {
+  return checked([&] { *out = ecc_point_to_bytes(point); });
 }
 
 EXPORT
-void wasm_ecc_point_multiply(ecc_point_ref* point, uint8_t* s_data, int s_size, ecc_point_ref* out) {
+int wasm_ecc_point_multiply(ecc_point_ref* point, uint8_t* s_data, int s_size, ecc_point_ref* out) {
   cmem_t scalar = {s_data, s_size};
-  *out = ecc_point_multiply(point, scalar);
+  return checked([&] { *out = ecc_point_multiply(point, scalar); });
 }
 
 EXPORT
-void wasm_ecc_point_add(ecc_point_ref* p1, ecc_point_ref* p2, ecc_point_ref* out) {
-  *out = ecc_point_add(p1, p2);
+int wasm_ecc_point_add(ecc_point_ref* p1, ecc_point_ref* p2, ecc_point_ref* out) {
+  return checked([&] { *out = ecc_point_add(p1, p2); });
 }
 
 EXPORT
-void wasm_ecc_point_subtract(ecc_point_ref* p1, ecc_point_ref* p2, ecc_point_ref* out) {
-  *out = ecc_point_subtract(p1, p2);
+int wasm_ecc_point_subtract(ecc_point_ref* p1, ecc_point_ref* p2, ecc_point_ref* out) {
+  return checked([&] { *out = ecc_point_subtract(p1, p2); });
 }
 
 EXPORT
-void wasm_ecc_point_get_x(ecc_point_ref* point, cmem_t* out) {
-  *out = ecc_point_get_x(point);
+int wasm_ecc_point_get_x(ecc_point_ref* point, cmem_t* out) {
+  return checked([&] { *out = ecc_point_get_x(point); });
 }
 
 EXPORT
-void wasm_ecc_point_get_y(ecc_point_ref* point, cmem_t* out) {
-  *out = ecc_point_get_y(point);
+int wasm_ecc_point_get_y(ecc_point_ref* point, cmem_t* out) {
+  return checked([&] { *out = ecc_point_get_y(point); });
 }
 
 // -- Scalar wrappers --
 
 EXPORT
-void wasm_bn_add(uint8_t* a_data, int a_size, uint8_t* b_data, int b_size, cmem_t* out) {
+int wasm_bn_add(uint8_t* a_data, int a_size, uint8_t* b_data, int b_size, cmem_t* out) {
   cmem_t a = {a_data, a_size};
   cmem_t b = {b_data, b_size};
-  *out = bn_add(a, b);
+  return checked([&] { *out = bn_add(a, b); });
 }
 
 EXPORT
-void wasm_ec_mod_add(ecurve_ref* curve, uint8_t* a_data, int a_size, uint8_t* b_data, int b_size, cmem_t* out) {
+int wasm_ec_mod_add(ecurve_ref* curve, uint8_t* a_data, int a_size, uint8_t* b_data, int b_size, cmem_t* out) {
   cmem_t a = {a_data, a_size};
   cmem_t b = {b_data, b_size};
-  *out = ec_mod_add(curve, a, b);
+  return checked([&] { *out = ec_mod_add(curve, a, b); });
 }
 
+// `value` is split into two 32-bit halves (int64_t arguments are not portable
+// through ccall without WASM_BIGINT).
 EXPORT
-void wasm_bn_from_int64(int64_t value, cmem_t* out) {
-  *out = bn_from_int64(value);
+int wasm_bn_from_int64(uint32_t lo, uint32_t hi, cmem_t* out) {
+  return checked([&] { *out = bn_from_int64(int64_t((uint64_t(hi) << 32) | lo)); });
 }
 
 // -- ECDSA 2P wrappers --
 
 EXPORT
-void wasm_mpc_ecdsa2p_key_get_Q(mpc_ecdsa2pc_key_ref* key, ecc_point_ref* out) {
-  *out = mpc_ecdsa2p_key_get_Q(key);
+int wasm_mpc_ecdsa2p_key_get_Q(mpc_ecdsa2pc_key_ref* key, ecc_point_ref* out) {
+  return checked([&] { *out = mpc_ecdsa2p_key_get_Q(key); });
 }
 
 EXPORT
-void wasm_mpc_ecdsa2p_key_get_x_share(mpc_ecdsa2pc_key_ref* key, cmem_t* out) {
-  *out = mpc_ecdsa2p_key_get_x_share(key);
+int wasm_mpc_ecdsa2p_key_get_x_share(mpc_ecdsa2pc_key_ref* key, cmem_t* out) {
+  return checked([&] { *out = mpc_ecdsa2p_key_get_x_share(key); });
 }
 
 // -- Verification wrapper --
@@ -467,8 +477,8 @@ int wasm_ecc_verify_der(int curve_code,
 // -- EC Key MP wrappers --
 
 EXPORT
-void wasm_mpc_eckey_mp_get_Q(mpc_eckey_mp_ref* key, ecc_point_ref* out) {
-  *out = mpc_eckey_mp_get_Q(key);
+int wasm_mpc_eckey_mp_get_Q(mpc_eckey_mp_ref* key, ecc_point_ref* out) {
+  return checked([&] { *out = mpc_eckey_mp_get_Q(key); });
 }
 
 // -- EC Key 2P / Schnorr 2P wrappers --
@@ -479,13 +489,13 @@ void wasm_free_mpc_eckey_2p(mpc_eckey_2p_ref* ref) {
 }
 
 EXPORT
-void wasm_mpc_eckey_2p_get_Q(mpc_eckey_2p_ref* key, ecc_point_ref* out) {
-  *out = mpc_eckey_2p_get_Q(key);
+int wasm_mpc_eckey_2p_get_Q(mpc_eckey_2p_ref* key, ecc_point_ref* out) {
+  return checked([&] { *out = mpc_eckey_2p_get_Q(key); });
 }
 
 EXPORT
-void wasm_mpc_eckey_2p_get_x_share(mpc_eckey_2p_ref* key, cmem_t* out) {
-  *out = mpc_eckey_2p_get_x_share(key);
+int wasm_mpc_eckey_2p_get_x_share(mpc_eckey_2p_ref* key, cmem_t* out) {
+  return checked([&] { *out = mpc_eckey_2p_get_x_share(key); });
 }
 
 EXPORT

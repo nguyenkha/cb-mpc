@@ -78,6 +78,11 @@ typedef struct data_transport_callbacks_t {
   receive_all_f receive_all_fun;
 } data_transport_callbacks_t;
 
+// Returns and clears the error recorded by the last call on this thread that
+// returns a value without a status code (curve/point/scalar helpers, key
+// getters). 0 means the call succeeded.
+int cbmpc_ts_take_last_error(void);
+
 // ---------------------------------------------------------------------------
 // Jobs and party sets
 // ---------------------------------------------------------------------------

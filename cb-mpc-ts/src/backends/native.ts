@@ -292,8 +292,13 @@ export class NativeBackend implements CbMpcModule {
   pointToSec1(pointRefPtr: number): Uint8Array {
     const xCmem = this.malloc(this.CMEM_SIZE);
     const yCmem = this.malloc(this.CMEM_SIZE);
-    this.call("wasm_ecc_point_get_x", pointRefPtr, xCmem);
-    this.call("wasm_ecc_point_get_y", pointRefPtr, yCmem);
+    const rx = this.call("wasm_ecc_point_get_x", pointRefPtr, xCmem);
+    const ry = this.call("wasm_ecc_point_get_y", pointRefPtr, yCmem);
+    if (rx !== 0 || ry !== 0) {
+      this.freeCmem(xCmem);
+      this.freeCmem(yCmem);
+      throw new Error(`cb-mpc: reading point coordinates failed (${rx || ry})`);
+    }
     const x = this.readCmem(xCmem);
     const y = this.readCmem(yCmem);
     this.freeCmem(xCmem);

@@ -22,6 +22,42 @@ const tr = (i: number) => ({
 const [k0] = await Promise.all([a.ecdsa2pDkg(tr(0), 0, ["p0", "p1"], M.NID_secp256k1), b.ecdsa2pDkg(tr(1), 1, ["p0", "p1"], M.NID_secp256k1)]);
 const ser0: Uint8Array[] = a.serializeEcdsa2p(k0);
 
+// Generic in-process async network for n WASM parties.
+function mesh(n: number) {
+  const qs = new Map<string, Uint8Array[]>(), ws = new Map<string, ((m: Uint8Array) => void)[]>();
+  const put = (to: number, from: number, m: Uint8Array) => {
+    const k = `${to}:${from}`, w = ws.get(k);
+    if (w?.length) return w.shift()!(m);
+    if (!qs.has(k)) qs.set(k, []);
+    qs.get(k)!.push(m);
+  };
+  const take = (to: number, from: number) => {
+    const k = `${to}:${from}`, q = qs.get(k);
+    if (q?.length) return Promise.resolve(q.shift()!);
+    return new Promise<Uint8Array>((r) => { if (!ws.has(k)) ws.set(k, []); ws.get(k)!.push(r); });
+  };
+  return Array.from({ length: n }, (_, i) => ({
+    async send(to: number, m: Uint8Array) { put(to, i, m.slice()); return 0; },
+    async receive(from: number) { return take(i, from); },
+    async receiveAll(fs: number[]) { return Promise.all(fs.map((f) => take(i, f))); },
+  }));
+}
+
+// A second ECDSA-2P key (P1 share) to splice parts from, an EdDSA-2P key and a 3-party MP key set.
+const [c, d] = [await M.initCbMpc(), await M.initCbMpc()];
+let net2 = mesh(2);
+const [k0b] = await Promise.all([c.ecdsa2pDkg(net2[0], 0, ["p0", "p1"], M.NID_secp256k1), d.ecdsa2pDkg(net2[1], 1, ["p0", "p1"], M.NID_secp256k1)]);
+const ser0b: Uint8Array[] = c.serializeEcdsa2p(k0b);
+net2 = mesh(2);
+const [e0] = await Promise.all([c.ecKey2pDkg(net2[0], 0, ["p0", "p1"], M.NID_ED25519), d.ecKey2pDkg(net2[1], 1, ["p0", "p1"], M.NID_ED25519)]);
+const serE: Uint8Array[] = c.serializeEcKey2p(e0);
+const mps = [await M.initCbMpc(), await M.initCbMpc(), await M.initCbMpc()];
+const net3 = mesh(3);
+const mpKeys = await Promise.all(mps.map((m, i) => { const cv = m.createCurve(M.NID_secp256k1); return m.ecKeyMpDkg(net3[i], 3, i, ["p0", "p1", "p2"], cv); }));
+const serM: Uint8Array[][] = mpKeys.map((k: any, i: number) => mps[i].serializeEcKeyMp(k));
+const splice = (base: Uint8Array[], idx: number, part: Uint8Array) => base.map((x, i) => (i === idx ? part.slice() : x.slice()));
+const flipLast = (x: Uint8Array) => { const y = x.slice(); y[y.length - 1] ^= 1; return y; };
+
 // Transport that must never be used (calls fail before any message).
 const dead = {
   async send() { return -1; }, async receive() { return new Uint8Array(0); }, async receiveAll() { return []; },
@@ -60,6 +96,22 @@ for (const [backend, init] of [["wasm", () => M.initCbMpc()], ["native", () => M
     return m.deserializeEcdsa2p(bad);
   });
   await expectError(`${backend}: serializeEcdsa2p null handle`, () => m.serializeEcdsa2p(0));
+  // Tampered keys are rejected at deserialization.
+  await expectError(`${backend}: ECDSA-2P P1 with another key's c_key`, () => m.deserializeEcdsa2p(splice(ser0, 4, ser0b[4])));
+  await expectError(`${backend}: ECDSA-2P P1 with another key's x_share`, () => m.deserializeEcdsa2p(splice(ser0, 3, ser0b[3])));
+  await expectError(`${backend}: ECDSA-2P Q not on curve`, () => m.deserializeEcdsa2p(splice(ser0, 2, flipLast(ser0[2]))));
+  await expectError(`${backend}: EdDSA-2P Q not on curve`, () => m.deserializeEcKey2p(splice(serE, 2, flipLast(serE[2]))));
+  await expectError(`${backend}: EC-key MP with another party's x_share`, () => m.deserializeEcKeyMp(splice(serM[0], 0, serM[1][0])));
+  await expectError(`${backend}: EC-key MP with mismatched Q`, () => m.deserializeEcKeyMp(splice(serM[0], 1, a.serializeEcdsa2p(k0)[2])));
+  // Untampered keys still load.
+  {
+    const ok = [m.deserializeEcdsa2p(ser0b), m.deserializeEcKey2p(serE), ...serM.map((x) => m.deserializeEcKeyMp(x))];
+    if (ok.every((h: number) => h)) { pass++; console.log(`PASS ${backend}: valid keys of every type still load`); } else { fail++; console.log(`FAIL ${backend}: valid key rejected`); }
+  }
+  // Value-returning helpers report failures instead of returning empty values.
+  await expectError(`${backend}: createCurve with unknown curve code`, () => m.createCurve(12345));
+  await expectError(`${backend}: pointFromBytes garbage`, () => m.pointFromBytes(new Uint8Array([1, 2, 3])));
+  await expectError(`${backend}: curveOrder on null handle`, () => m.curveOrder(0));
   await expectError(`${backend}: zkDlProve aux=-1`, () => m.zkDlProve(0, new Uint8Array(32), new Uint8Array(32), -1), "RangeError");
 
   // Library still healthy after all the errors: the loaded key signs-verifies via a fresh hash.
