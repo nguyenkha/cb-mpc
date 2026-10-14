@@ -134,4 +134,41 @@ error_t detach_private_scalar(mem_t key_blob, buf_t& out_public_key_blob, buf_t&
 error_t attach_private_scalar(mem_t public_key_blob, mem_t private_scalar_fixed, mem_t public_share_compressed,
                               buf_t& out_key_blob);
 
+// ---------------------------------------------------------------------------
+// Resharing (fork addition)
+// ---------------------------------------------------------------------------
+
+// Reshare an existing key to a new access structure, keeping the public key.
+//
+// The input is an additive sharing of the private key held by `dealer_party_names` (for example both shares of a
+// 2-of-2 key, or the outputs of `ac_key_to_additive_share` for a qualifying quorum of an access-structure key). Each
+// dealer deals its share over `new_access_structure` with commitments and proofs; every receiver verifies its share
+// against the commitments and that the dealt shares sum to `public_key_compressed`.
+//
+// Notes:
+// - **All** parties in `job.party_names` must be online. Each one is a dealer, a leaf of `new_access_structure`, or
+//   both; all of them must pass the same `public_key_compressed`, `dealer_party_names` and `new_access_structure`.
+// - Dealers pass their additive share as a big-endian integer in `additive_share` (at most 64 bytes; it is reduced
+//   modulo the curve order, so an unreduced ECDSA-2P P1 share is accepted). Non-dealers pass an empty buffer.
+// - On success, parties in `new_access_structure` receive an access-structure key blob (usable with `sign_ac` and
+//   `refresh_ac`); dealers outside it get an empty `new_ac_key_blob`.
+// - Resharing does not revoke the old shares: any old qualifying set still reconstructs the same key. Callers must
+//   delete the old key blobs (and old additive shares) once the new generation is confirmed, and should run
+//   `refresh_ac` on the new generation.
+// - `sid` is an in/out session id; callers may pass an empty buffer to let the protocol derive one.
+//
+// Supported curves: `curve_id::ed25519`.
+error_t reshare_from_additive(const job_mp_t& job, curve_id curve, buf_t& sid, mem_t public_key_compressed,
+                              const std::vector<std::string_view>& dealer_party_names, mem_t additive_share,
+                              const access_structure_t& new_access_structure, buf_t& new_ac_key_blob);
+
+// Convert this party's access-structure key share into its additive share for `quorum_party_names`
+// (Lagrange-weighted, fixed-length big-endian, curve order size). The additive shares of the parties of exactly that
+// quorum sum to the private key; use them as `reshare_from_additive` input with the same quorum as dealers.
+//
+// The output is private key material, like the key blob itself.
+error_t ac_key_to_additive_share(mem_t ac_key_blob, const access_structure_t& access_structure,
+                                 const std::vector<std::string_view>& quorum_party_names,
+                                 buf_t& out_additive_share_fixed);
+
 }  // namespace coinbase::api::eddsa_mp

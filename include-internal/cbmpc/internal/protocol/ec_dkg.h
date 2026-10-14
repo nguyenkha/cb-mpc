@@ -106,6 +106,18 @@ struct key_share_mp_t {
   static error_t refresh_ac(job_mp_t& job, const ecurve_t& curve, buf_t& sid, const crypto::ss::ac_t,
                             const party_set_t& quorum_party_set, key_share_mp_t& key, key_share_mp_t& new_key);
 
+  /**
+   * Fork addition (not in upstream specs): reshare a key with known public key `Q` from the additive shares held by
+   * `dealer_party_set` to the access structure `new_ac`, keeping `Q`.
+   * - All job parties must be online; each is a dealer, a leaf of `new_ac`, or both.
+   * - Dealers pass their additive share in `additive_share` (the dealers' shares must sum to the private key);
+   *   it is ignored for other parties.
+   * - On success `has_new_key` is true iff this party is a leaf of `new_ac`, and `new_key` holds its new share.
+   */
+  static error_t reshare_ac(job_mp_t& job, const ecurve_t& curve, buf_t& sid, const crypto::ss::ac_t new_ac,
+                            const party_set_t& dealer_party_set, const ecc_point_t& Q, const bn_t& additive_share,
+                            key_share_mp_t& new_key, bool& has_new_key);
+
  private:
   static error_t dkg_or_refresh_ac(job_mp_t& job, const ecurve_t& curve, buf_t& sid, const crypto::ss::ac_t,
                                    const party_set_t& quorum_party_set, key_share_mp_t& key, key_share_mp_t& new_key,
