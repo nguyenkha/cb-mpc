@@ -7,6 +7,8 @@
 #include <string_view>
 #include <vector>
 
+#include <cbmpc/api/pve_base_pke.h>
+#include <cbmpc/api/pve_batch_single_recipient.h>
 #include <cbmpc/core/buf.h>
 #include <cbmpc/internal/crypto/base.h>
 #include <cbmpc/internal/protocol/agree_random.h>
@@ -863,5 +865,88 @@ int mpc_agree_random(job_2p_ref* j, int bit_len, cmem_t* out) {
     buf_t out_buf;
     if (error_t rv = agree_random(*job, bit_len, out_buf)) return rv;
     return copy_to_cmem_rv(out_buf, out);
+  });
+}
+
+// ===========================================================================
+// PVE (batch, single recipient, built-in ECIES P-256 base PKE)
+// ===========================================================================
+
+namespace {
+
+// Maps an OpenSSL curve NID to the public API curve id; false when unsupported.
+bool pve_curve(int curve_code, coinbase::api::curve_id& out) {
+  ecurve_t curve = ecurve_t::find(curve_code);
+  if (curve == curve_secp256k1) out = coinbase::api::curve_id::secp256k1;
+  else if (curve == curve_p256) out = coinbase::api::curve_id::p256;
+  else if (curve == curve_ed25519) out = coinbase::api::curve_id::ed25519;
+  else return false;
+  return true;
+}
+
+std::vector<mem_t> mems_view(const std::vector<buf_t>& bufs) {
+  std::vector<mem_t> out;
+  out.reserve(bufs.size());
+  for (const auto& b : bufs) out.emplace_back(b);
+  return out;
+}
+
+}  // namespace
+
+int pve_generate_ecies_p256_keypair(cmem_t* ek, cmem_t* dk) {
+  if (ek) *ek = cmem_t{nullptr, 0};
+  if (dk) *dk = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    if (!ek || !dk) return E_BADARG;
+    buf_t ek_buf, dk_buf;
+    if (error_t rv = coinbase::api::pve::generate_base_pke_ecies_p256_keypair(ek_buf, dk_buf)) return rv;
+    if (int rv = copy_to_cmem_rv(ek_buf, ek)) return rv;
+    if (int rv = copy_to_cmem_rv(dk_buf, dk)) {
+      std::free(ek->data);
+      *ek = cmem_t{nullptr, 0};
+      return rv;
+    }
+    return 0;
+  });
+}
+
+int pve_batch_encrypt(int curve_code, cmem_t ek, cmem_t label, cmems_t xs, cmem_t* ciphertext) {
+  if (ciphertext) *ciphertext = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    coinbase::api::curve_id curve;
+    if (!ciphertext || !pve_curve(curve_code, curve)) return E_BADARG;
+    std::vector<buf_t> x_bufs = bufs_from_cmems(xs);
+    if (x_bufs.empty()) return E_BADARG;
+    buf_t ct;
+    if (error_t rv = coinbase::api::pve::encrypt_batch(curve, view(ek), view(label), mems_view(x_bufs), ct)) return rv;
+    return copy_to_cmem_rv(ct, ciphertext);
+  });
+}
+
+int pve_batch_verify(int curve_code, cmem_t ek, cmem_t ciphertext, cmems_t Qs_compressed, cmem_t label) {
+  return guard_rv([&]() -> int {
+    coinbase::api::curve_id curve;
+    if (!pve_curve(curve_code, curve)) return E_BADARG;
+    std::vector<buf_t> q_bufs = bufs_from_cmems(Qs_compressed);
+    if (q_bufs.empty()) return E_BADARG;
+    // Accept points as serialized by this layer (ecc_point_to_bytes) as well as
+    // raw compressed encodings: re-encode the former to what the PVE API parses.
+    for (auto& q : q_bufs) {
+      ecc_point_t point;
+      if (!coinbase::deser(mem_t(q), point)) q = point.to_compressed_bin();
+    }
+    return coinbase::api::pve::verify_batch(curve, view(ek), view(ciphertext), mems_view(q_bufs), view(label));
+  });
+}
+
+int pve_batch_decrypt(int curve_code, cmem_t dk, cmem_t ek, cmem_t ciphertext, cmem_t label, cmems_t* xs) {
+  if (xs) *xs = cmems_t{0, nullptr, nullptr};
+  return guard_rv([&]() -> int {
+    coinbase::api::curve_id curve;
+    if (!xs || !pve_curve(curve_code, curve)) return E_BADARG;
+    std::vector<buf_t> out;
+    if (error_t rv = coinbase::api::pve::decrypt_batch(curve, view(dk), view(ek), view(ciphertext), view(label), out))
+      return rv;
+    return copy_to_cmems_rv(mems_view(out), xs);
   });
 }

@@ -114,6 +114,12 @@ export const FFI_SIGNATURES: Record<string, FfiSignature> = {
   wasm_zk_dl_prove: sig("i32", "ptr", "ptr", "ptr", "i32", "i32", "ptr"),
   wasm_zk_dl_verify: sig("i32", "ptr", "ptr", "ptr", "i32", "i32"),
 
+  // PVE
+  pve_generate_ecies_p256_keypair: sig("i32", "ptr", "ptr"),
+  wasm_pve_batch_encrypt: sig("i32", "i32", "ptr", "ptr", "ptr", "ptr"),
+  wasm_pve_batch_verify: sig("i32", "i32", "ptr", "ptr", "ptr", "ptr"),
+  wasm_pve_batch_decrypt: sig("i32", "i32", "ptr", "ptr", "ptr", "ptr", "ptr"),
+
   // Agree random
   mpc_agree_random: sig("i32", "ptr", "i32", "ptr"),
 };

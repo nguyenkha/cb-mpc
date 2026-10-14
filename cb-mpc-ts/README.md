@@ -133,6 +133,27 @@ const restored = mpc.deserializeEcdsa2p(parts);
 
 ECDSA-MP and EdDSA-MP share the same key type as EC Key MP.
 
+## Publicly Verifiable Encryption (PVE)
+
+Back up key-share scalars to a recipient key so that anyone holding the public
+share points can check the backup without decrypting it (cbmpc's built-in
+ECIES P-256 base PKE, batch, single recipient):
+
+```typescript
+const { ek, dk } = mpc.pveGenerateKeypair();           // dk stays with the recipient
+const { xShare } = mpc.ecdsa2pKeyInfo(key);
+const ct = mpc.pveBatchEncrypt(NID_secp256k1, ek, label, [xShare]);
+
+const Q = mpc.pointToBytes(mpc.mulGenerator(curve, xShare)); // or any trusted copy of x*G
+mpc.pveBatchVerify(NID_secp256k1, ek, ct, [Q], label);  // true, no decryption needed
+
+const [x] = mpc.pveBatchDecrypt(NID_secp256k1, dk, ek, ct, label);
+```
+
+`pveBatchDecrypt` does not verify first; call `pveBatchVerify` when the
+ciphertext is untrusted. For ECDSA-2P party 0 (P1) a scalar backup is not
+enough to restore the key; see `SECURE_USAGE.md#ecdsa-2p-p1-backup-limitations`.
+
 ## Curve Codes
 
 ```typescript
@@ -217,6 +238,7 @@ See [examples/browser.html](examples/browser.html) for a full demo.
 | [eddsa-mpc.ts](examples/eddsa-mpc.ts) | EdDSA multi-party (3-of-3) |
 | [agree-random.ts](examples/agree-random.ts) | Two-party random agreement |
 | [key-serialization.ts](examples/key-serialization.ts) | Serialize/deserialize all key types |
+| [pve-backup.ts](examples/pve-backup.ts) | PVE backup of key shares: encrypt, verify, decrypt |
 | [browser.html](examples/browser.html) | Browser WASM demo |
 
 Run examples with:

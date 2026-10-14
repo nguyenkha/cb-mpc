@@ -1049,6 +1049,91 @@ export class CbMpc {
   }
 
   // =========================================================================
+  // PVE (publicly verifiable encryption) — batch, single recipient,
+  // cbmpc's built-in ECIES (P-256) base PKE
+  // =========================================================================
+
+  /** Generate a PVE recipient keypair. `dk` is secret; `ek` can be public. */
+  pveGenerateKeypair(): { ek: Uint8Array; dk: Uint8Array } {
+    const ekCmem = this.mod.malloc(this.mod.CMEM_SIZE);
+    const dkCmem = this.mod.malloc(this.mod.CMEM_SIZE);
+    const err = this.mod.call("pve_generate_ecies_p256_keypair", ekCmem, dkCmem);
+    const ek = err === 0 ? this.mod.readCmem(ekCmem) : new Uint8Array(0);
+    const dk = err === 0 ? this.mod.readCmem(dkCmem) : new Uint8Array(0);
+    this.mod.freeCmem(ekCmem);
+    this.mod.freeCmem(dkCmem);
+    checkError(err, "pveGenerateKeypair");
+    return { ek, dk };
+  }
+
+  /**
+   * Encrypt scalars `xs` (big-endian) on `curveCode` to `ek`, bound to `label`.
+   * Anyone holding `ek`, `label` and the public points x_i*G can check the
+   * ciphertext with {@link pveBatchVerify} without decrypting it.
+   */
+  pveBatchEncrypt(curveCode: number, ek: Uint8Array, label: Uint8Array, xs: Uint8Array[]): Uint8Array {
+    const ekCmem = this.mod.writeCmem(ek);
+    const labelCmem = this.mod.writeCmem(label);
+    const xsCmems = this.mod.writeCmems(xs);
+    const ctCmem = this.mod.malloc(this.mod.CMEM_SIZE);
+    const err = this.mod.call("wasm_pve_batch_encrypt", curveCode, ekCmem, labelCmem, xsCmems, ctCmem);
+    const ct = err === 0 ? this.mod.readCmem(ctCmem) : new Uint8Array(0);
+    this.mod.freeCmem(ekCmem);
+    this.mod.freeCmem(labelCmem);
+    this.mod.freeCmems(xsCmems);
+    this.mod.freeCmem(ctCmem);
+    checkError(err, "pveBatchEncrypt");
+    return ct;
+  }
+
+  /**
+   * True when `ciphertext` encrypts scalars x_i with x_i*G == Qs[i] under `ek` and `label`.
+   * Qs[i] may come from {@link pointToBytes} or be a raw compressed encoding (SEC1 / Ed25519).
+   */
+  pveBatchVerify(
+    curveCode: number,
+    ek: Uint8Array,
+    ciphertext: Uint8Array,
+    Qs: Uint8Array[],
+    label: Uint8Array,
+  ): boolean {
+    const ekCmem = this.mod.writeCmem(ek);
+    const ctCmem = this.mod.writeCmem(ciphertext);
+    const qsCmems = this.mod.writeCmems(Qs);
+    const labelCmem = this.mod.writeCmem(label);
+    const err = this.mod.call("wasm_pve_batch_verify", curveCode, ekCmem, ctCmem, qsCmems, labelCmem);
+    this.mod.freeCmem(ekCmem);
+    this.mod.freeCmem(ctCmem);
+    this.mod.freeCmems(qsCmems);
+    this.mod.freeCmem(labelCmem);
+    return err === 0;
+  }
+
+  /** Decrypt a batch ciphertext. Does not verify it first; call {@link pveBatchVerify} when that matters. */
+  pveBatchDecrypt(
+    curveCode: number,
+    dk: Uint8Array,
+    ek: Uint8Array,
+    ciphertext: Uint8Array,
+    label: Uint8Array,
+  ): Uint8Array[] {
+    const dkCmem = this.mod.writeCmem(dk);
+    const ekCmem = this.mod.writeCmem(ek);
+    const ctCmem = this.mod.writeCmem(ciphertext);
+    const labelCmem = this.mod.writeCmem(label);
+    const xsCmems = this.mod.malloc(this.mod.POINTER_SIZE * 3);
+    const err = this.mod.call("wasm_pve_batch_decrypt", curveCode, dkCmem, ekCmem, ctCmem, labelCmem, xsCmems);
+    const xs = err === 0 ? this.mod.readCmems(xsCmems) : [];
+    this.mod.freeCmem(dkCmem);
+    this.mod.freeCmem(ekCmem);
+    this.mod.freeCmem(ctCmem);
+    this.mod.freeCmem(labelCmem);
+    this.mod.freeCmems(xsCmems);
+    checkError(err, "pveBatchDecrypt");
+    return xs;
+  }
+
+  // =========================================================================
   // Agree Random (Two-Party)
   // =========================================================================
 

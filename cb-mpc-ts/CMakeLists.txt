@@ -54,6 +54,12 @@ file(GLOB PROTO_SRCS   ${SRC_DIR}/cbmpc/protocol/*.cpp)
 set(CAPI_DIR ${CMAKE_CURRENT_LIST_DIR}/capi)
 set(CAPI_SRCS ${CAPI_DIR}/cbmpc_ts.cpp)
 
+# Public PVE API used by the PVE bindings
+set(API_SRCS
+  ${SRC_DIR}/cbmpc/api/pve_base_pke.cpp
+  ${SRC_DIR}/cbmpc/api/pve_batch_single_recipient.cpp
+)
+
 # WASM-specific binding
 set(WASM_SRCS ${CMAKE_CURRENT_LIST_DIR}/binding.cpp)
 
@@ -64,6 +70,7 @@ add_executable(cbmpc_wasm
   ${CRYPTO_SRCS}
   ${ZK_SRCS}
   ${PROTO_SRCS}
+  ${API_SRCS}
   ${CAPI_SRCS}
   ${WASM_SRCS}
 )
@@ -158,6 +165,11 @@ set(EXPORTED_FUNCTIONS
   "_wasm_mpc_eddsampc_sign"
   "_wasm_zk_dl_prove"
   "_wasm_zk_dl_verify"
+  # PVE
+  "_pve_generate_ecies_p256_keypair"
+  "_wasm_pve_batch_encrypt"
+  "_wasm_pve_batch_verify"
+  "_wasm_pve_batch_decrypt"
   # EC Key MP
   "_mpc_eckey_mp_dkg"
   "_mpc_eckey_mp_refresh"
