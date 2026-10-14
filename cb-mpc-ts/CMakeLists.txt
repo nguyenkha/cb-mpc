@@ -14,7 +14,9 @@ include(${ROOT_DIR}/cmake/macros.cmake)
 
 # ------------- OpenSSL for WASM ------------------------------------------------
 
-set(CBMPC_OPENSSL_ROOT "$ENV{CBMPC_OPENSSL_ROOT}")
+if(NOT CBMPC_OPENSSL_ROOT)
+  set(CBMPC_OPENSSL_ROOT "$ENV{CBMPC_OPENSSL_ROOT}")
+endif()
 if(NOT CBMPC_OPENSSL_ROOT)
   set(CBMPC_OPENSSL_ROOT "/usr/local/opt/openssl@3.6.4-wasm")
 endif()

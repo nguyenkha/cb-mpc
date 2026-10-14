@@ -5,6 +5,47 @@ using uint128_t = unsigned __int128;
 
 namespace coinbase::crypto {
 
+// Little-endian 64-bit word view of a BIGNUM's magnitude, zero-padded to N words.
+// With 64-bit BN_ULONG limbs (all native targets) it points straight at `d`;
+// with 32-bit limbs (wasm32) it copies the limb bytes into a local buffer.
+template <int N>
+class bn_words_t {
+ public:
+  explicit bn_words_t(const BIGNUM& bn) {
+    static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "bn_words_t assumes a little-endian target");
+    if constexpr (sizeof(BN_ULONG) == sizeof(uint64_t)) {
+      p_ = reinterpret_cast<const uint64_t*>(bn.d);
+    } else {
+      for (int i = 0; i < N; i++) buf_[i] = 0;
+      size_t n = size_t(bn.top) * sizeof(BN_ULONG);
+      if (n > sizeof(buf_)) n = sizeof(buf_);
+      if (n) memcpy(buf_, bn.d, n);
+      p_ = buf_;
+    }
+  }
+  bn_words_t(const bn_words_t&) = delete;
+  bn_words_t& operator=(const bn_words_t&) = delete;
+
+  uint64_t operator[](int i) const { return p_[i]; }
+  operator const uint64_t*() const { return p_; }
+
+ private:
+  const uint64_t* p_ = nullptr;
+  uint64_t buf_[N];
+};
+
+// Montgomery constant -m^{-1} mod 2^64 for an odd modulus. OpenSSL only fills
+// a 64-bit n0 when BN_ULONG is 64-bit (or with 32-bit asm), so derive it there.
+inline uint64_t mont_n0_u64(const BN_MONT_CTX* ctx, uint64_t m0) {
+  if constexpr (sizeof(BN_ULONG) == sizeof(uint64_t)) {
+    return uint64_t(ctx->n0[0]);
+  } else {
+    uint64_t inv = m0;                                  // correct to 3 bits for odd m0
+    for (int i = 0; i < 5; i++) inv *= 2 - m0 * inv;    // Newton: 6, 12, 24, 48, 96 bits
+    return uint64_t(0) - inv;
+  }
+}
+
 #ifdef __x86_64__
 bool support_x64_mulx();
 #endif
@@ -15,8 +56,12 @@ inline uint64_t addx(uint64_t x, uint64_t y, uint64_t& carry) {
   carry = _addcarry_u64(uint8_t(carry), x, y, &z);
   return z;
 #else
-#if __has_builtin(__builtin_addcl)
-  return __builtin_addcl(x, y, carry, (unsigned long int*)&carry);
+#if __has_builtin(__builtin_addcll)
+  // `ll` variant: `unsigned long` is only 32 bits on wasm32.
+  unsigned long long c;
+  uint64_t z = __builtin_addcll(x, y, carry, &c);
+  carry = c;
+  return z;
 #else
   auto r = uint128_t(x) + y + carry;
   carry = uint64_t(r >> 64);
@@ -31,8 +76,11 @@ inline uint64_t subx(uint64_t x, uint64_t y, uint64_t& borrow) {
   borrow = _subborrow_u64(uint8_t(borrow), x, y, &z);
   return z;
 #else
-#if __has_builtin(__builtin_subcl)
-  return __builtin_subcl(x, y, borrow, (unsigned long int*)&borrow);
+#if __has_builtin(__builtin_subcll)
+  unsigned long long b;
+  uint64_t z = __builtin_subcll(x, y, borrow, &b);
+  borrow = b;
+  return z;
 #else
   auto r = uint128_t(x) - y - borrow;
   borrow = uint64_t(r >> 64) & 1;

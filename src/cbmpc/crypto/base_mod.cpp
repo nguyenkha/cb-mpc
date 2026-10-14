@@ -4,7 +4,14 @@
 
 namespace coinbase::crypto {
 
+#if defined(__EMSCRIPTEN__)
+// wasm32 OpenSSL uses 32-bit BN_ULONG limbs, which the constant-time Barrett
+// code below does not support. Fall back to OpenSSL's (variable-time) modular
+// arithmetic there, as the cb-mpc-ts fork has always done for WASM builds.
+static thread_local int vartime_scope = 1;
+#else
 static thread_local int vartime_scope = 0;
+#endif
 
 vartime_scope_t::vartime_scope_t() { vartime_scope++; }
 vartime_scope_t::~vartime_scope_t() { vartime_scope--; }

@@ -868,7 +868,7 @@ bn256_t bn256_t::operator-() const {
 }
 
 void bn256_t::add_mod(bn256_t& r, const bn256_t& a, const bn256_t& b, const mod_t& mod) {
-  const auto m = mod.value().val.d;
+  const bn_words_t<4> m(mod.value().val);
 
   uint64_t carry = 0;
   uint64_t a0 = addx(a.w0, b.w0, carry);
@@ -891,7 +891,7 @@ void bn256_t::add_mod(bn256_t& r, const bn256_t& a, const bn256_t& b, const mod_
 }
 
 void bn256_t::sub_mod(bn256_t& r, const bn256_t& a, const bn256_t& b, const mod_t& mod) {
-  const auto m = mod.value().val.d;
+  const bn_words_t<4> m(mod.value().val);
 
   uint64_t borrow = 0;
   uint64_t s0 = subx(a.w0, b.w0, borrow);
@@ -913,7 +913,7 @@ void bn256_t::sub_mod(bn256_t& r, const bn256_t& a, const bn256_t& b, const mod_
 }
 
 void bn256_t::neg_mod(bn256_t& r, const bn256_t& a, const mod_t& mod) {
-  const auto m = mod.value().val.d;
+  const bn_words_t<4> m(mod.value().val);
 
   uint64_t borrow = 0;
   uint64_t s0 = subx(0, a.w0, borrow);
@@ -1020,8 +1020,8 @@ void bn256_t::barrett_reduce(uint64_t x[8], const uint64_t* m, const uint64_t* m
 bn256_t bn256_t::operator*(const bn256_t& b) const {
   const mod_t* mod = thread_local_storage_mod();
   cb_assert(mod);
-  const auto m = mod->value().val.d;
-  const auto mu = mod->get_barrett_mu().val.d;
+  const bn_words_t<4> m(mod->value().val);
+  const bn_words_t<5> mu(mod->get_barrett_mu().val);
 
   uint64_t temp[8];
   uint256_t::mul(temp, (const uint256_t&)*this, (const uint256_t&)b);
@@ -1040,7 +1040,7 @@ bn256_t bn256_t::operator/(const bn256_t& b) const {
 void bn256_t::add_no_reduce(uint64_t r[8], const bn256_t& a) {
   const mod_t* mod = thread_local_storage_mod();
   cb_assert(mod);
-  const auto m = mod->value().val.d;
+  const bn_words_t<4> m(mod->value().val);
 
   uint64_t carry = 0;
   uint64_t a0 = addx(a.w0, r[0], carry);
@@ -1073,7 +1073,7 @@ void bn256_t::add_no_reduce(uint64_t r[8], const bn256_t& a) {
 void bn256_t::mul_add_no_reduce(uint64_t r[8], const bn256_t& a, const bn256_t& b) {
   const mod_t* mod = thread_local_storage_mod();
   cb_assert(mod);
-  const auto m = mod->value().val.d;
+  const bn_words_t<4> m(mod->value().val);
 
   uint64_t temp[8];
   uint256_t::mul(temp, (const uint256_t&)a, (const uint256_t&)b);
@@ -1115,11 +1115,12 @@ bn256_t bn256_t::reduce(uint64_t x[8]) {
 bn256_t bn256_t::reduce(uint64_t x[8], const mod_t& mod) {
   const auto& m_val = mod.value().val;
   const auto& mu_val = mod.get_barrett_mu().val;
-  cb_assert(m_val.top == 4);
-  cb_assert(mu_val.top == 5);
+  // Same bounds as "4 / 5 64-bit words", independent of the BN_ULONG width.
+  cb_assert(BN_num_bits(&m_val) > 192 && BN_num_bits(&m_val) <= 256);
+  cb_assert(BN_num_bits(&mu_val) > 256 && BN_num_bits(&mu_val) <= 320);
 
-  const auto m = m_val.d;
-  const auto mu = mu_val.d;
+  const bn_words_t<4> m(m_val);
+  const bn_words_t<5> mu(mu_val);
 
   bn256_t r;
   r.barrett_reduce(x, (const uint64_t*)m, (const uint64_t*)mu);
@@ -1352,9 +1353,9 @@ void bn256_t::mont_reduce(uint64_t u[8], const uint64_t* m, uint64_t mont_prime)
 bn256_t bn256_t::to_mont() const {
   const mod_t* mod = thread_local_storage_mod();
   cb_assert(mod);
-  const auto m = mod->value().val.d;
-  auto prime = mod->get_mont_ctx()->n0[0];
-  auto rr = mod->get_mont_ctx()->RR.d;
+  const bn_words_t<4> m(mod->value().val);
+  auto prime = mont_n0_u64(mod->get_mont_ctx(), m[0]);
+  const bn_words_t<4> rr(mod->get_mont_ctx()->RR);
 
   // static uint256_t RR = uint256_t::get_mont_rr(MOD::w);
   // mont_mul(r, a, RR);
@@ -1373,8 +1374,8 @@ bn256_t bn256_t::to_mont() const {
 bn256_t bn256_t::from_mont() const {
   const mod_t* mod = thread_local_storage_mod();
   cb_assert(mod);
-  const auto m = mod->value().val.d;
-  auto prime = mod->get_mont_ctx()->n0[0];
+  const bn_words_t<4> m(mod->value().val);
+  auto prime = mont_n0_u64(mod->get_mont_ctx(), m[0]);
 
   uint64_t temp[8] = {w0, w1, w2, w3, 0, 0, 0, 0};
   bn256_t r;
@@ -1385,8 +1386,8 @@ bn256_t bn256_t::from_mont() const {
 bn256_t bn256_t::mont_mul(const bn256_t& a, const bn256_t& b) {
   const mod_t* mod = thread_local_storage_mod();
   cb_assert(mod);
-  const auto m = mod->value().val.d;
-  auto prime = mod->get_mont_ctx()->n0[0];
+  const bn_words_t<4> m(mod->value().val);
+  auto prime = mont_n0_u64(mod->get_mont_ctx(), m[0]);
 
   bn256_t r;
   r.mont_mul(a, b, (const uint64_t*)m, prime);

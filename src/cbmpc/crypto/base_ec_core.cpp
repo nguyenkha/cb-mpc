@@ -5,12 +5,14 @@ namespace coinbase::crypto {
 
 booth_wnaf_t::booth_wnaf_t(int _win, const bn_t& x, int _bits, bool _back)
     : win(_win), bits(_bits), back(_back), index(0) {
-  cb_assert(sizeof(BN_ULONG) * 8 == 64);
+  // Copies the little-endian limbs as bytes, so this works for 32- and 64-bit
+  // BN_ULONG on little-endian targets (wasm32 uses 32-bit limbs).
+  static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "booth_wnaf_t assumes a little-endian target");
 
   bzero(data, 33);
   const BIGNUM& bn = *(const BIGNUM*)x;
   cb_assert(bn.neg == 0);
-  cb_assert(bn.top <= 4);
+  cb_assert(size_t(bn.top) * sizeof(BN_ULONG) <= 32);
 
   if (bn.top > 0) memmove(data, bn.d, bn.top * sizeof(BN_ULONG));
 

@@ -58,7 +58,8 @@ bn256_t drbg_aes_ctr_t::gen_bn256(const mod_t& mod) {
 
   const bn_t& m = mod;
   const BIGNUM* mbn = m;
-  if (mbn->top == 4 && mbn->d[3] == 0xffffffffffffffff && mbn->d[2] >= 0xffffffffffff0000) {
+  const bn_words_t<4> mw(*mbn);
+  if (BN_num_bits(mbn) == 256 && mw[3] == 0xffffffffffffffff && mw[2] >= 0xffffffffffff0000) {
     // Fast path for near-2^256 moduli. This intentionally skips reduction for
     // speed; callers of gen_bn256 must tolerate the negligible chance that the
     // result is >= mod.
