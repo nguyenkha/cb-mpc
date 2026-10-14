@@ -471,6 +471,11 @@ TYPED_TEST(ApiReshareAc, BadArgumentsRejected) {
   xs.erase("iphone");
   xs.erase("mac");
   for (auto rv : reshare<Api>(kAll, {kMac, kServer}, xs, Q, kTwoOfThree, out)) EXPECT_NE(rv, SUCCESS);
+  // A dealer share that reduces to 0.
+  xs = additive_shares<Api>(g0, {kMac, kServer});
+  xs["mac"] = buf_t(32);
+  for (int i = 0; i < 32; i++) xs["mac"][i] = 0;
+  for (auto rv : reshare<Api>(kAll, {kMac, kServer}, xs, Q, kTwoOfThree, out)) EXPECT_NE(rv, SUCCESS);
   // New structure names a party that is not in the job.
   xs = additive_shares<Api>(g0, {kMac, kServer});
   const access_structure_t foreign = threshold_of(2, {kMac, kServer, "watch"});

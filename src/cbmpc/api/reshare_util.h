@@ -62,6 +62,7 @@ inline error_t run_reshare_from_additive(const job_mp_t& job, const coinbase::cr
     if (rv = validate_mem_arg_max_size(additive_share, "additive_share", MAX_ADDITIVE_SHARE_SIZE)) return rv;
     if (additive_share.size == 0) return coinbase::error(E_BADARG, "dealer must provide additive_share");
     x = coinbase::crypto::bn_t::from_bin(additive_share) % curve.order();
+    if (x == 0) return coinbase::error(E_BADARG, "zero additive share");
   } else if (additive_share.size != 0) {
     return coinbase::error(E_BADARG, "additive_share given by a party that is not a dealer");
   }
