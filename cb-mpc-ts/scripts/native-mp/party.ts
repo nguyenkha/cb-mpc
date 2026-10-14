@@ -49,6 +49,22 @@ self.onmessage = async (ev: MessageEvent) => {
         out.rand = await mpc.agreeRandom(t, idx, names, 256);
         break;
       }
+      case "ac": {
+        // Access-structure op over scenario.names (this worker is names[idx]); blobs passed in by name.
+        const sc = scenario;
+        const me = sc.names[idx];
+        if (sc.op === "dkg") out.blob = await mpc.dkgAc(t, idx, sc.names, sc.curve, sc.ac, sc.names);
+        else if (sc.op === "refresh") out.blob = await mpc.refreshAc(t, idx, sc.names, sc.blobs[me], sc.ac, sc.names);
+        else if (sc.op === "sign") out.sig = await mpc.signAc(t, idx, sc.names, sc.blobs[me], sc.ac, msg, 0);
+        else if (sc.op === "reshare") {
+          const x = sc.dealers.includes(me)
+            ? sc.xs?.[me] ?? mpc.acToAdditiveShare(sc.blobs[me], sc.oldAc, sc.dealers)
+            : null;
+          out.blob = await mpc.reshareFromAdditive(t, idx, sc.names, sc.curve, sc.pub, sc.dealers, x, sc.ac);
+        }
+        if (out.blob?.length) out.pub = mpc.acKeyInfo(out.blob).publicKey;
+        break;
+      }
       case "loadsign": {
         // Load a serialized ECDSA-2P key (e.g. made by another version) and sign.
         const key = mpc.deserializeEcdsa2p(scenario.keys[idx]);

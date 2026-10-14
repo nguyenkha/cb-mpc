@@ -68,6 +68,12 @@ _pve_batch_decrypt
 _wasm_pve_batch_encrypt
 _wasm_pve_batch_verify
 _wasm_pve_batch_decrypt
+_wasm_mpc_ac_dkg
+_wasm_mpc_ac_refresh
+_wasm_mpc_ac_sign
+_wasm_mpc_ac_reshare_from_additive
+_wasm_mpc_ac_to_additive_share
+_wasm_mpc_ac_key_info
 _wasm_deserialize_mpc_eckey_2p
 _wasm_deserialize_mpc_eckey_mp
 

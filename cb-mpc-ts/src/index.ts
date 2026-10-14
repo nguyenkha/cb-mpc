@@ -42,6 +42,8 @@ import type {
 
 export type { CbMpcModule } from "./module.js";
 export * from "./types.js";
+export * from "./access-structure.js";
+import { type AccessStructure, encodeAccessStructure } from "./access-structure.js";
 
 // ---------------------------------------------------------------------------
 // Module initialization
@@ -1131,6 +1133,185 @@ export class CbMpc {
     this.mod.freeCmems(xsCmems);
     checkError(err, "pveBatchDecrypt");
     return xs;
+  }
+
+  // =========================================================================
+  // Access-structure (AC) keys: dkg / refresh / sign / reshare
+  // =========================================================================
+  // Key blobs are the library's v2 AC blobs (same bytes as the C API). ECDSA-MP on secp256k1 / P-256,
+  // EdDSA-MP on Ed25519. Blobs and additive shares are secret key material.
+
+  /** Runs `fn(jobPtr)` with an MP job over `partyNames` (this party at `partyIndex`). */
+  private async withJobMp<T>(
+    what: string,
+    transport: DataTransport,
+    partyIndex: number,
+    partyNames: string[],
+    fn: (jobPtr: number) => Promise<T>,
+  ): Promise<T> {
+    const transportId = this.registerTransport(transport);
+    const { arrayPtr: namesArray, namePtrs } = this.mod.allocPartyNames(partyNames);
+    let jobPtr = 0;
+    try {
+      jobPtr = this.mod.call(
+        "wasm_new_job_mp", transportId, partyNames.length, partyIndex, namesArray, partyNames.length,
+      );
+      if (!jobPtr) throw new CbMpcError(-1, `${what}: failed to create job`);
+      return await fn(jobPtr);
+    } finally {
+      if (jobPtr) this.mod.call("free_job_mp", jobPtr);
+      for (const p of namePtrs) this.mod.free(p);
+      this.mod.free(namesArray);
+      this.unregisterTransport(transportId);
+    }
+  }
+
+  /** Calls `fnName(...args, outCmem)` and returns the output buffer; frees every input cmem/cmems. */
+  private async callForCmem(
+    fnName: string,
+    args: number[],
+    cmems: number[],
+    cmemsList: number[],
+  ): Promise<Uint8Array> {
+    const out = this.mod.malloc(this.mod.CMEM_SIZE);
+    try {
+      const err = await this.mod.callAsync(fnName, ...args, out);
+      const result = err === 0 ? this.mod.readCmem(out) : new Uint8Array(0);
+      checkError(err, fnName);
+      return result;
+    } finally {
+      this.mod.freeCmem(out);
+      for (const c of cmems) this.mod.freeCmem(c);
+      for (const c of cmemsList) this.mod.freeCmems(c);
+    }
+  }
+
+  private encodeNames(names: string[]): Uint8Array[] {
+    return names.map((n) => new TextEncoder().encode(n));
+  }
+
+  /**
+   * Access-structure DKG. All of `partyNames` must be online; `quorumNames` (satisfying `accessStructure`)
+   * contribute randomness. Returns this party's key blob.
+   */
+  async dkgAc(
+    transport: DataTransport,
+    partyIndex: number,
+    partyNames: string[],
+    curveCode: number,
+    accessStructure: AccessStructure,
+    quorumNames: string[],
+  ): Promise<Uint8Array> {
+    return this.withJobMp("dkgAc", transport, partyIndex, partyNames, (job) => {
+      const ac = this.mod.writeCmem(encodeAccessStructure(accessStructure));
+      const quorum = this.mod.writeCmems(this.encodeNames(quorumNames));
+      return this.callForCmem("wasm_mpc_ac_dkg", [job, curveCode, ac, quorum], [ac], [quorum]);
+    });
+  }
+
+  /** Re-randomize all shares (same public key). All of `partyNames` must be online. */
+  async refreshAc(
+    transport: DataTransport,
+    partyIndex: number,
+    partyNames: string[],
+    keyBlob: Uint8Array,
+    accessStructure: AccessStructure,
+    quorumNames: string[],
+  ): Promise<Uint8Array> {
+    return this.withJobMp("refreshAc", transport, partyIndex, partyNames, (job) => {
+      const key = this.mod.writeCmem(keyBlob);
+      const ac = this.mod.writeCmem(encodeAccessStructure(accessStructure));
+      const quorum = this.mod.writeCmems(this.encodeNames(quorumNames));
+      return this.callForCmem("wasm_mpc_ac_refresh", [job, key, ac, quorum], [key, ac], [quorum]);
+    });
+  }
+
+  /**
+   * Sign with a qualifying set of online parties (`partyNames` = the signers only). Returns the signature
+   * (DER for ECDSA, 64 bytes for EdDSA) on `sigReceiver`; other parties get an empty array.
+   */
+  async signAc(
+    transport: DataTransport,
+    partyIndex: number,
+    partyNames: string[],
+    keyBlob: Uint8Array,
+    accessStructure: AccessStructure,
+    message: Uint8Array,
+    sigReceiver: number,
+  ): Promise<Uint8Array> {
+    return this.withJobMp("signAc", transport, partyIndex, partyNames, (job) => {
+      const key = this.mod.writeCmem(keyBlob);
+      const ac = this.mod.writeCmem(encodeAccessStructure(accessStructure));
+      const msg = this.mod.writeCmem(message);
+      return this.callForCmem("wasm_mpc_ac_sign", [job, key, ac, msg, sigReceiver], [key, ac, msg], []);
+    });
+  }
+
+  /**
+   * Reshare a key to `newAccessStructure`, keeping `publicKey` (compressed, or SEC1 as returned by the 2P key
+   * getters). `dealerNames` hold an additive sharing of the key: both shares of a 2P key (`xShare` from
+   * ecdsa2pKeyInfo / ecKey2pInfo) or {@link acToAdditiveShare} outputs for one quorum. Dealers pass their share,
+   * other parties pass null. All of `partyNames` must be online and each is a dealer, a new party, or both.
+   * Returns the new key blob, or an empty array for a dealer outside the new structure.
+   *
+   * Old shares are not revoked: delete them once every new party has stored its blob, then run refreshAc.
+   */
+  async reshareFromAdditive(
+    transport: DataTransport,
+    partyIndex: number,
+    partyNames: string[],
+    curveCode: number,
+    publicKey: Uint8Array,
+    dealerNames: string[],
+    additiveShare: Uint8Array | null,
+    newAccessStructure: AccessStructure,
+  ): Promise<Uint8Array> {
+    return this.withJobMp("reshareFromAdditive", transport, partyIndex, partyNames, (job) => {
+      const Q = this.mod.writeCmem(publicKey);
+      const dealers = this.mod.writeCmems(this.encodeNames(dealerNames));
+      const x = this.mod.writeCmem(additiveShare ?? new Uint8Array(0));
+      const ac = this.mod.writeCmem(encodeAccessStructure(newAccessStructure));
+      return this.callForCmem(
+        "wasm_mpc_ac_reshare_from_additive", [job, curveCode, Q, dealers, x, ac], [Q, x, ac], [dealers],
+      );
+    });
+  }
+
+  /** This party's additive share for exactly `quorumNames` (Lagrange-weighted). Secret. */
+  acToAdditiveShare(keyBlob: Uint8Array, accessStructure: AccessStructure, quorumNames: string[]): Uint8Array {
+    const key = this.mod.writeCmem(keyBlob);
+    const ac = this.mod.writeCmem(encodeAccessStructure(accessStructure));
+    const quorum = this.mod.writeCmems(this.encodeNames(quorumNames));
+    const out = this.mod.malloc(this.mod.CMEM_SIZE);
+    try {
+      const err = this.mod.call("wasm_mpc_ac_to_additive_share", key, ac, quorum, out);
+      const x = err === 0 ? this.mod.readCmem(out) : new Uint8Array(0);
+      checkError(err, "acToAdditiveShare");
+      return x;
+    } finally {
+      this.mod.freeCmem(out);
+      this.mod.freeCmem(key);
+      this.mod.freeCmem(ac);
+      this.mod.freeCmems(quorum);
+    }
+  }
+
+  /** Compressed public key and this party's compressed public share. */
+  acKeyInfo(keyBlob: Uint8Array): { publicKey: Uint8Array; publicShare: Uint8Array } {
+    const key = this.mod.writeCmem(keyBlob);
+    const q = this.mod.malloc(this.mod.CMEM_SIZE);
+    const qi = this.mod.malloc(this.mod.CMEM_SIZE);
+    try {
+      const err = this.mod.call("wasm_mpc_ac_key_info", key, q, qi);
+      const publicKey = err === 0 ? this.mod.readCmem(q) : new Uint8Array(0);
+      const publicShare = err === 0 ? this.mod.readCmem(qi) : new Uint8Array(0);
+      checkError(err, "acKeyInfo");
+      return { publicKey, publicShare };
+    } finally {
+      this.mod.freeCmem(key);
+      this.mod.freeCmem(q);
+      this.mod.freeCmem(qi);
+    }
   }
 
   // =========================================================================

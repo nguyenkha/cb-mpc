@@ -120,6 +120,14 @@ export const FFI_SIGNATURES: Record<string, FfiSignature> = {
   wasm_pve_batch_verify: sig("i32", "i32", "ptr", "ptr", "ptr", "ptr"),
   wasm_pve_batch_decrypt: sig("i32", "i32", "ptr", "ptr", "ptr", "ptr", "ptr"),
 
+  // Access-structure keys
+  wasm_mpc_ac_dkg: sig("i32", "ptr", "i32", "ptr", "ptr", "ptr"),
+  wasm_mpc_ac_refresh: sig("i32", "ptr", "ptr", "ptr", "ptr", "ptr"),
+  wasm_mpc_ac_sign: sig("i32", "ptr", "ptr", "ptr", "ptr", "i32", "ptr"),
+  wasm_mpc_ac_reshare_from_additive: sig("i32", "ptr", "i32", "ptr", "ptr", "ptr", "ptr", "ptr"),
+  wasm_mpc_ac_to_additive_share: sig("i32", "ptr", "ptr", "ptr", "ptr"),
+  wasm_mpc_ac_key_info: sig("i32", "ptr", "ptr", "ptr"),
+
   // Agree random
   mpc_agree_random: sig("i32", "ptr", "i32", "ptr"),
 };
