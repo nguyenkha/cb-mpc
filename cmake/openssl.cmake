@@ -4,7 +4,7 @@
 # The OpenSSL path can be customized via:
 #   1. CMake variable: -DCBMPC_OPENSSL_ROOT=/path/to/openssl
 #   2. Environment variable: export CBMPC_OPENSSL_ROOT=/path/to/openssl
-#   3. Default: /usr/local/opt/openssl@3.2.0
+#   3. Default: /usr/local/opt/openssl@3.6.4
 #
 # To build the custom OpenSSL, run the appropriate script:
 #   - macOS (x86_64): scripts/openssl/build-static-openssl-macos.sh
@@ -17,7 +17,7 @@ macro(link_openssl TARGET_NAME)
     if(DEFINED ENV{CBMPC_OPENSSL_ROOT})
       set(CBMPC_OPENSSL_ROOT $ENV{CBMPC_OPENSSL_ROOT})
     else()
-      set(CBMPC_OPENSSL_ROOT "/usr/local/opt/openssl@3.2.0")
+      set(CBMPC_OPENSSL_ROOT "/usr/local/opt/openssl@3.6.4")
     endif()
   endif()
 
@@ -41,8 +41,7 @@ macro(link_openssl TARGET_NAME)
     set(_cbmpc_openssl_include "${CBMPC_OPENSSL_ROOT}/include")
     set(_cbmpc_openssl_lib "${CBMPC_OPENSSL_ROOT}/lib/libcrypto.a")
   else()
-    message(STATUS "link_openssl: skipping (unsupported platform)")
-    return()
+    message(FATAL_ERROR "link_openssl: unsupported platform")
   endif()
 
   # Note: Do not hard-fail on missing OpenSSL here to keep compatibility with

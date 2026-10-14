@@ -8,6 +8,7 @@ target_sources(cbmpc_crypto  PRIVATE
 
   base.cpp
   base_bn.cpp
+  base_bn256.cpp
   base_mod.cpp
   base_ec_core.cpp
   base_ecc.cpp
@@ -17,7 +18,6 @@ target_sources(cbmpc_crypto  PRIVATE
   base_rsa.cpp
   base_paillier.cpp
   base_rsa_oaep.cpp
-  base_pki.cpp
 
   drbg.cpp
   ro.cpp
@@ -27,6 +27,7 @@ target_sources(cbmpc_crypto  PRIVATE
   secret_sharing.cpp
 
   tdh2.cpp
+  mlkem768.cpp
 )
 
 target_link_libraries(cbmpc_crypto cbmpc_core)

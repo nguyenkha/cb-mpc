@@ -1,10 +1,10 @@
 
-#include "ec25519_core.h"
+#include <tuple>
 
-#include <cbmpc/core/extended_uint.h>
-#include <cbmpc/core/utils.h>
-
-#include "base_ec_core.h"
+#include <cbmpc/internal/core/utils.h>
+#include <cbmpc/internal/crypto/base_bn256.h>
+#include <cbmpc/internal/crypto/base_ec_core.h>
+#include <cbmpc/internal/crypto/ec25519_core.h>
 
 #define EXTENDED_COORD
 
@@ -27,10 +27,10 @@ static void fe_freeze(uint256_t& r) {
   t2 = addx(t2, 0, c);
   t3 = addx(t3, hi, c);
   uint64_t mask = constant_time_mask_64(c);
-  t0 = r0 = MASKED_SELECT(mask, t0, r0);
-  t1 = r1 = MASKED_SELECT(mask, t1, r1);
-  t2 = r2 = MASKED_SELECT(mask, t2, r2);
-  t3 = r3 = MASKED_SELECT(mask, t3, r3);
+  t0 = r0 = masked_select(mask, t0, r0);
+  t1 = r1 = masked_select(mask, t1, r1);
+  t2 = r2 = masked_select(mask, t2, r2);
+  t3 = r3 = masked_select(mask, t3, r3);
 
   c = 0;
   t0 = addx(t0, 19, c);
@@ -38,10 +38,10 @@ static void fe_freeze(uint256_t& r) {
   t2 = addx(t2, 0, c);
   t3 = addx(t3, hi, c);
   mask = constant_time_mask_64(c);
-  r.w0 = MASKED_SELECT(mask, t0, r0);
-  r.w1 = MASKED_SELECT(mask, t1, r1);
-  r.w2 = MASKED_SELECT(mask, t2, r2);
-  r.w3 = MASKED_SELECT(mask, t3, r3);
+  r.w0 = masked_select(mask, t0, r0);
+  r.w1 = masked_select(mask, t1, r1);
+  r.w2 = masked_select(mask, t2, r2);
+  r.w3 = masked_select(mask, t3, r3);
 }
 
 static void fe_add(uint256_t& r, const uint256_t& x, const uint256_t& y) {
@@ -84,6 +84,27 @@ static void fe_sub(uint256_t& r, const uint256_t& x, const uint256_t& y) {
   r.w1 = x1;
   r.w2 = x2;
   r.w3 = x3;
+}
+
+// Divide by two modulo p = 2^255 - 19.
+static void fe_half(uint256_t& r, const uint256_t& x) {
+  uint64_t d0 = (x.w0 >> 1) | (x.w1 << 63);
+  uint64_t d1 = (x.w1 >> 1) | (x.w2 << 63);
+  uint64_t d2 = (x.w2 >> 1) | (x.w3 << 63);
+  uint64_t d3 = x.w3 >> 1;
+  const uint64_t odd_mask = uint64_t(0) - (x.w0 & 1);
+
+  // If the dropped bit was one, add (p + 1) / 2 = 2^254 - 9.
+  uint64_t c = 0;
+  d0 = addx(d0, odd_mask & 0xfffffffffffffff7, c);
+  d1 = addx(d1, odd_mask, c);
+  d2 = addx(d2, odd_mask, c);
+  d3 = addx(d3, odd_mask >> 2, c);
+
+  r.w0 = d0;
+  r.w1 = d1;
+  r.w2 = d2;
+  r.w3 = d3;
 }
 
 static void fe_square_noasm(uint256_t& r, const uint256_t& x) {
@@ -665,6 +686,70 @@ struct fe_t {
   static void add(fe_t& r, const fe_t& a) { add(r, r, a); }
   static void mul(fe_t& r, const fe_t& a) { mul(r, r, a); }
   static void sqr(fe_t& r) { sqr(r, r); }
+  static void half(fe_t& r, const fe_t& a) { fe_half(r.d, a.d); }
+
+  fe_t half() const {
+    fe_t r;
+    half(r, *this);
+    return r;
+  }
+
+  fe_t sqr() const {
+    fe_t r;
+    sqr(r, *this);
+    return r;
+  }
+
+  fe_t xsquare(int n) const {
+    fe_t r = *this;
+    for (int i = 0; i < n; i++) sqr(r);
+    return r;
+  }
+
+  // Return a canonical even square-root candidate and whether it is a root.
+  std::tuple<fe_t, bool> sqrt_ext() const {
+    fe_t z = *this + *this;
+    fe_t z2 = z.sqr();
+    fe_t z3 = z2 * z;
+    fe_t zp4 = z3.xsquare(2) * z3;
+    fe_t zp5 = zp4.sqr() * z;
+    fe_t zp15 = (zp5.xsquare(5) * zp5).xsquare(5) * zp5;
+    fe_t zp30 = zp15.xsquare(15) * zp15;
+    fe_t zp60 = zp30.xsquare(30) * zp30;
+    fe_t zp120 = zp60.xsquare(60) * zp60;
+    fe_t zp240 = zp120.xsquare(120) * zp120;
+
+    fe_t y = zp240;
+    constexpr uint64_t exponent_tail = 0x1ffffffffffffffd;
+    fe_t b = y;
+    const fe_t window[] = {z, z2, z3};
+
+    for (int i = 0; i < 6; i++) {
+      sqr(b);
+      sqr(b);
+      const int k = int((exponent_tail >> (10 - (2 * i))) & 3);
+      if (k) b *= window[k - 1];
+    }
+
+    fe_t c = z * b.sqr();
+    const bool is_unit = (c == fe_t::one()) || (c == -fe_t::one());
+    fe_t c_adjusted = c;
+    c_adjusted.cnd_assign(is_unit, fe_t::to_fe(3));
+    y = (*this) * b * (c_adjusted - fe_t::one());
+
+    fe_freeze(y.d);
+    const fe_t y_negated = -y;
+    y.d.cnd_assign(y.d.is_odd(), y_negated.d);
+
+    const bool ok = y.sqr() == *this;
+    return {y, ok};
+  }
+
+  std::tuple<fe_t, bool> sqrt() const {
+    auto [r, ok] = sqrt_ext();
+    if (!ok) return {fe_t::zero(), false};
+    return {r, true};
+  }
 
   uint256_t from_fe() const {
     uint256_t r = d;
@@ -817,6 +902,9 @@ using curve_t = crypto::ecurve_core_t<formula_t>;
 using point_t = curve_t::point_t;
 using generator_point_t = curve_t::generator_point_t;
 
+static_assert(sizeof(crypto::ecp_storage_t) == sizeof(point_t), "ecp_storage_t must match Ed25519 point storage size");
+static_assert(alignof(crypto::ecp_storage_t) >= alignof(point_t), "ecp_storage_t must satisfy Ed25519 point alignment");
+
 }  // namespace coinbase::crypto::ec25519_core
 
 template <>
@@ -861,11 +949,53 @@ void mul_to_generator_vartime(crypto::ecp_storage_t* r, const bn_t& x) {
   curve_t::mul_to_generator<crypto::ec_vartime>(x, *(point_t*)r);
 }
 
+// Variable-time point-halving test from https://eprint.iacr.org/2022/1164.
 bool is_in_subgroup(const crypto::ecp_storage_t* a) {
-  static bn_t q_minus_1 = bn_t::from_hex("1000000000000000000000000000000014DEF9DEA2F79CD65812631A5CF5D3EC");
-  point_t x;
-  curve_t::mul(*(const point_t*)a, q_minus_1, x);
-  return *(const point_t*)a == -x;
+  const point_t& P = *(const point_t*)a;
+  if (P.is_infinity()) return true;
+  if (!P.is_on_curve()) return false;
+
+  // Reject the seven non-identity points in the order-eight torsion subgroup.
+  static const fe_t sqrt_m1 =
+      fe_t::to_fe(uint256_t::make(0xc4ee1b274a0ea09d, 0x2f431806ad2fe478, 0x2b4d00993dfbd7a7, 0xab8324804fc1df0b));
+  const fe_t iy = P.y * sqrt_m1;
+  if (P.x.is_zero() || P.y.is_zero() || iy == P.x || iy == -P.x) return false;
+
+  const fe_t A = -fe_t::one();
+  const fe_t D = formula_t::get_d();
+  const fe_t A_minus_D = A - D;
+  const fe_t A0 = (A + D) + (A + D);
+  const fe_t AP0 = -(A0 + A0);
+  static const fe_t sqrt_2BP0 =
+      fe_t::to_fe(uint256_t::make(0x1a9f3ec897eb404c, 0xdcbe48eefe58e409, 0xeccfa7e460864b8d, 0x184e375b980a76df));
+
+  fe_t e = P.x * (P.z - P.y);
+  fe_t u = A_minus_D * (P.z + P.y) * P.x * e;
+  fe_t w = P.z * (P.z - P.y);
+  w += w;
+
+  for (int i = 0; i < 2; i++) {
+    fe_t u_scaled = u + u;
+    u_scaled += u_scaled;
+    const fe_t w_scaled = w + w;
+
+    auto [w_prime, has_w_prime] = u_scaled.sqrt();
+    if (!has_w_prime) return false;
+
+    const fe_t u_prime = (u_scaled - AP0 * e * e - w_prime * w_scaled).half();
+    auto [t, has_u_prime_root] = u_prime.sqrt_ext();
+    w = t;
+    if (!has_u_prime_root) {
+      if (t.sqr() == -(u_prime + u_prime)) t *= sqrt_m1;
+      w_prime *= t;
+      w = sqrt_2BP0 * e.sqr();
+      e *= t;
+    }
+    u = (w.sqr() - A0 * e.sqr() - w * w_prime).half();
+    if (!has_u_prime_root) w = -w;
+  }
+
+  return bn_t::jacobi(u.to_bn(), crypto::curve_ed25519.p()) == 1;
 }
 
 static error_t from_bin(point_t& R, mem_t bin) {
@@ -874,7 +1004,13 @@ static error_t from_bin(point_t& R, mem_t bin) {
   buf_t buf = bin.rev();
   uint8_t neg = buf[0] >> 7;
   buf[0] &= 0x7f;
-  fe_t y = fe_t::to_fe(uint256_t::from_bin(buf));
+
+  // RFC 8032 5.1.3 (1): the y-coordinate must be canonical (y < p).
+  // There are 19 non-canonical values in [p, 2^255-1] that must be rejected.
+  uint256_t y_raw = uint256_t::from_bin(buf);
+  if (y_raw.to_bn() >= crypto::curve_ed25519.p()) return coinbase::error(E_CRYPTO);
+
+  fe_t y = fe_t::to_fe(y_raw);
 
   // x² = (y² - 1) / (dy² + 1)
 
@@ -902,6 +1038,11 @@ static error_t from_bin(point_t& R, mem_t bin) {
   }
 
   uint256_t x_val = x.from_fe();
+
+  // RFC 8032 5.1.3 (4): reject the non-canonical "negative zero" encoding
+  // (x == 0 with the sign bit set).
+  if (neg && x_val.is_zero()) return coinbase::error(E_CRYPTO);
+
   if (neg != (x_val.w0 & 1)) x = -x;
 
   R.x = x;
@@ -938,6 +1079,7 @@ void sub(crypto::ecp_storage_t* r, const crypto::ecp_storage_t* a, const crypto:
 void add(crypto::ecp_storage_t* r, const crypto::ecp_storage_t* a, const crypto::ecp_storage_t* b) {
   *(point_t*)r = *(const point_t*)a + *(const point_t*)b;
 }
+void dbl(crypto::ecp_storage_t* r, const crypto::ecp_storage_t* a) { curve_t::dbl(*(point_t*)r, *(const point_t*)a); }
 bool equ(const crypto::ecp_storage_t* a, const crypto::ecp_storage_t* b) {
   return *(const point_t*)a == *(const point_t*)b;
 }
@@ -949,65 +1091,6 @@ crypto::ecp_storage_t* new_point() {
   return a;
 }
 void free_point(crypto::ecp_storage_t* a) { delete a; }
-
-static bn_t from_le_mod_q(mem_t bin) { return curve_t::order().mod(bn_t::from_bin(bin.rev())); }
-
-static bn_t hash_hram(const uint8_t sig[32], mem_t message, const uint8_t public_key[32]) {
-  uint8_t hram[64];
-  unsigned int hash_len = 0;
-  EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-  EVP_DigestInit(ctx, EVP_sha512());
-  EVP_DigestUpdate(ctx, sig, 32);
-  EVP_DigestUpdate(ctx, public_key, 32);
-  EVP_DigestUpdate(ctx, message.data, message.size);
-  EVP_DigestFinal(ctx, hram, &hash_len);
-  EVP_MD_CTX_free(ctx);
-  return from_le_mod_q(mem_t(hram, 64));
-}
-
-static void sign_with_nonce(uint8_t* signature, const uint8_t* message, size_t message_len,
-                            const uint8_t public_key[32], const uint8_t az[32], const uint8_t nonce[32]) {
-  bn_t nonce_bn = from_le_mod_q(mem_t(nonce, 64));
-  point_t R;
-  curve_t::mul_to_generator(nonce_bn, R);
-  to_bin(R, signature);
-
-  bn_t hram_bn = hash_hram(signature, mem_t(message, int(message_len)), public_key);
-
-  bn_t az_bn = from_le_mod_q(mem_t(az, 32));
-  const mod_t& q = curve_t::order();
-  bn_t s = q.mul(hram_bn, az_bn);
-  s = q.add(s, nonce_bn);
-
-  s.to_bin(signature + 32, 32);
-  mem_t(signature + 32, 32).reverse();
-}
-
-static void hash_az(uint8_t* az, const uint8_t private_key[32]) {
-  unsigned int hash_len = 0;
-  EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-  EVP_DigestInit(ctx, EVP_sha512());
-  EVP_DigestUpdate(ctx, private_key, 32);
-  EVP_DigestFinal(ctx, az, &hash_len);
-  EVP_MD_CTX_free(ctx);
-
-  az[0] &= 248;
-  az[31] &= 63;
-  az[31] |= 64;
-}
-
-extern "C" int ED25519_sign_with_scalar(uint8_t* out_sig, const uint8_t* message, size_t message_len,
-                                        const uint8_t public_key[32], const uint8_t scalar_bin[32]) {
-  uint8_t nonce[64];
-  RAND_bytes(nonce, 64);
-
-  uint8_t az[32];
-  for (int i = 0; i < 32; i++) az[i] = scalar_bin[31 - i];
-
-  sign_with_nonce(out_sig, message, message_len, public_key, az, nonce);
-  OPENSSL_cleanse(az, sizeof(az));
-  return 1;
-}
 
 }  // namespace coinbase::crypto::ec25519_core
 

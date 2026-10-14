@@ -1,14 +1,23 @@
 #include <gtest/gtest.h>
 
-#include <cbmpc/crypto/base.h>
-#include <cbmpc/crypto/ro.h>
+#include <cbmpc/internal/crypto/base.h>
+#include <cbmpc/internal/crypto/ro.h>
 
 #include "utils/test_macros.h"
 
 using namespace coinbase;
 using namespace coinbase::crypto;
 
+namespace coinbase::crypto {
+extern "C" int BN_cmpCT(const BIGNUM* a, const BIGNUM* b);
+}
+
 namespace {
+
+error_t return_inside_modulo_scope(const mod_t& q) {
+  MODULO(q) { return E_CRYPTO; }
+  return SUCCESS;
+}
 
 TEST(BigNumber, Addition) {
   EXPECT_EQ(bn_t(123) + bn_t(456), 579);
@@ -28,6 +37,60 @@ TEST(BigNumber, Subtraction) {
   EXPECT_EQ(bn_t(999) - bn_t(0), 999);
 }
 
+TEST(BigNumber, IntOperatorsHandleIntMin) {
+  const int v = INT_MIN;
+
+  bn_t abs_v;
+  abs_v.set_int64(2147483648LL);
+
+  // Non-modular operators
+  EXPECT_EQ(bn_t(0) + v, bn_t(v));
+  EXPECT_EQ(bn_t(1) * v, bn_t(v));
+
+  EXPECT_EQ(bn_t(0) - v, abs_v);
+  EXPECT_EQ(bn_t(0) * v, 0);
+
+  bn_t x = 0;
+  EXPECT_NO_THROW(x += v);
+  EXPECT_EQ(x, bn_t(v));
+
+  bn_t y = 0;
+  EXPECT_NO_THROW(y -= v);
+  EXPECT_EQ(y, abs_v);
+
+  bn_t z = 1;
+  EXPECT_NO_THROW(z *= v);
+  EXPECT_EQ(z, bn_t(v));
+
+  // Modular path uses `mod_t::mod(int)` internally; ensure INT_MIN does not trigger UB.
+  const mod_t& q = crypto::curve_ed25519.order();
+  bn_t expected_mod;
+  MODULO(q) { expected_mod = -abs_v; }
+  MODULO(q) { EXPECT_EQ(bn_t(0) + v, expected_mod); }
+}
+
+TEST(BigNumber, ModuloScopeRestoresThreadLocalStateAfterEarlyReturn) {
+  const mod_t& q = crypto::curve_ed25519.order();
+
+  ASSERT_EQ(thread_local_storage_mod(), nullptr);
+  EXPECT_EQ(return_inside_modulo_scope(q), E_CRYPTO);
+  EXPECT_EQ(thread_local_storage_mod(), nullptr);
+  EXPECT_EQ(bn_t(10) + bn_t(3), 13);
+}
+
+TEST(BigNumber, ModuloScopeRestoresPreviousNestedModulus) {
+  const mod_t& outer = crypto::curve_ed25519.order();
+  const mod_t& inner = crypto::curve_secp256k1.order();
+
+  ASSERT_EQ(thread_local_storage_mod(), nullptr);
+  MODULO(outer) {
+    ASSERT_EQ(thread_local_storage_mod(), &outer);
+    MODULO(inner) { EXPECT_EQ(thread_local_storage_mod(), &inner); }
+    EXPECT_EQ(thread_local_storage_mod(), &outer);
+  }
+  EXPECT_EQ(thread_local_storage_mod(), nullptr);
+}
+
 TEST(BigNumber, Multiplication) {
   EXPECT_EQ(bn_t(123) * bn_t(456), 56088);
   EXPECT_EQ(bn_t(-123) * bn_t(456), -56088);
@@ -40,6 +103,13 @@ TEST(BigNumber, Multiplication) {
 TEST(BigNumber, GCD) {
   EXPECT_EQ(bn_t::gcd(123, 456), 3);
   EXPECT_EQ(bn_t::gcd(0, 456), 456);
+}
+
+TEST(BigNumber, JacobiSymbol) {
+  EXPECT_EQ(bn_t::jacobi(5, 11), 1);
+  EXPECT_EQ(bn_t::jacobi(2, 11), -1);
+  EXPECT_EQ(bn_t::jacobi(0, 11), 0);
+  EXPECT_EQ(bn_t::jacobi(1, 0), -2);
 }
 
 // Newly added tests:
@@ -89,6 +159,18 @@ TEST(BigNumber, ShiftOperators) {
 
   bn_t val3 = val2 >> 2;
   EXPECT_EQ(val3, 10);
+
+  // Negative shifts are treated as no-ops.
+  bn_t neg1(32);
+  neg1 <<= -5;
+  EXPECT_EQ(neg1, 32);
+
+  bn_t neg2(1);
+  neg2 >>= -10;
+  EXPECT_EQ(neg2, 1);
+
+  EXPECT_EQ(bn_t(5) << -3, 5);
+  EXPECT_EQ(bn_t(10) >> -2, 10);
 }
 
 TEST(BigNumber, BitwiseSetAndCheck) {
@@ -128,6 +210,46 @@ TEST(BigNumber, RangeCheck) {
   EXPECT_ER_MSG(check_open_range(bn_t(3), bn_t(3), bn_t(5)), "check_open_range failed");
   EXPECT_OK(check_open_range(bn_t(3), bn_t(4), bn_t(5)));
   EXPECT_ER_MSG(check_open_range(bn_t(3), bn_t(5), bn_t(5)), "check_open_range failed");
+}
+
+TEST(BigNumber, FromStringValidInput) {
+  bn_t result;
+  EXPECT_OK(bn_t::from_string("0", result));
+  EXPECT_EQ(result, 0);
+  EXPECT_OK(bn_t::from_string("12345", result));
+  EXPECT_EQ(result, 12345);
+  EXPECT_OK(bn_t::from_string("-42", result));
+  EXPECT_EQ(result, -42);
+}
+
+TEST(BigNumber, FromStringRejectsInvalidInput) {
+  bn_t result;
+  EXPECT_ER(bn_t::from_string("", result));
+  EXPECT_ER(bn_t::from_string("not_a_number", result));
+  EXPECT_ER(bn_t::from_string("1234ncc", result));
+  EXPECT_ER(bn_t::from_string("0xAB", result));
+  EXPECT_ER(bn_t::from_string(nullptr, result));
+}
+
+TEST(BigNumber, FromHexValidInput) {
+  bn_t result;
+  EXPECT_OK(bn_t::from_hex("0", result));
+  EXPECT_EQ(result, 0);
+  EXPECT_OK(bn_t::from_hex("FF", result));
+  EXPECT_EQ(result, 255);
+  EXPECT_OK(bn_t::from_hex("-1A", result));
+  EXPECT_EQ(result, -26);
+  EXPECT_OK(bn_t::from_hex("abc", result));
+  EXPECT_EQ(result, 0xabc);
+}
+
+TEST(BigNumber, FromHexRejectsInvalidInput) {
+  bn_t result;
+  EXPECT_ER(bn_t::from_hex("", result));
+  EXPECT_ER(bn_t::from_hex("0xAB", result));
+  EXPECT_ER(bn_t::from_hex("ZZZZ", result));
+  EXPECT_ER(bn_t::from_hex("1234ncc", result));
+  EXPECT_ER(bn_t::from_hex(nullptr, result));
 }
 
 TEST(BigNumber, CompareMatchesOpenSSL) {
@@ -193,5 +315,155 @@ TEST(BigNumber, GetBinSize) {
   MODULO(crypto::curve_ed25519.order()) { a += 0; };
   EXPECT_EQ(a, 1);
   EXPECT_EQ(a.get_bin_size(), 1);
+}
+
+TEST(BigNumber, SmallHelpersAndStringParseErrors) {
+  EXPECT_EQ(crypto::div_ceil(0, 8), 0);
+  EXPECT_EQ(crypto::div_ceil(1, 8), 1);
+  EXPECT_EQ(crypto::div_ceil(16, 8), 2);
+  EXPECT_EQ(crypto::div_ceil(17, 8), 3);
+
+  EXPECT_EQ(bn_t(1024).div_2_pow(5), 32);
+  EXPECT_EQ(bn_t(-1024).div_2_pow(5), -32);
+
+  bn_t parsed;
+  EXPECT_OK(bn_t::from_string(std::string("123456789"), parsed));
+  EXPECT_EQ(parsed, bn_t::from_string("123456789"));
+  EXPECT_ER(bn_t::from_string(std::string("not-a-number"), parsed));
+}
+
+TEST(BigNumber, ConvertDeserializeOversizedNoThrow) {
+  const uint32_t value_size = bn_t::MAX_SERIALIZED_BIGNUM_BYTES + 1;
+  const uint32_t header = value_size << 1;  // neg=0
+
+  int header_size = 0;
+  {
+    converter_t sizer(true);
+    uint32_t tmp = header;
+    sizer.convert_len(tmp);
+    header_size = sizer.get_offset();
+  }
+
+  ASSERT_GT(header_size, 0);
+  ASSERT_LE(value_size, static_cast<uint32_t>(INT_MAX - header_size));
+  const int value_size_int = static_cast<int>(value_size);
+
+  buf_t buffer(header_size + value_size_int);
+  {
+    converter_t writer(buffer.data());
+    uint32_t tmp = header;
+    writer.convert_len(tmp);
+    memset(writer.current(), 0x7F, static_cast<size_t>(value_size_int));
+    writer.forward(value_size_int);
+  }
+
+  bn_t result;
+  converter_t reader{mem_t(buffer)};
+  EXPECT_NO_THROW(result.convert(reader));
+  EXPECT_TRUE(reader.is_error());
+  EXPECT_EQ(reader.get_offset(), header_size);
+}
+
+TEST(BigNumber, ConstantTimeCompareCWrapper) {
+  const bn_t five = 5;
+  const bn_t seven = 7;
+  const bn_t neg_five = -5;
+  const bn_t neg_seven = -7;
+
+  EXPECT_EQ(BN_cmpCT(nullptr, nullptr), 0);
+  EXPECT_EQ(BN_cmpCT((const BIGNUM*)five, nullptr), -1);
+  EXPECT_EQ(BN_cmpCT(nullptr, (const BIGNUM*)five), 1);
+
+  EXPECT_EQ(BN_cmpCT((const BIGNUM*)five, (const BIGNUM*)five), 0);
+  EXPECT_LT(BN_cmpCT((const BIGNUM*)five, (const BIGNUM*)seven), 0);
+  EXPECT_GT(BN_cmpCT((const BIGNUM*)seven, (const BIGNUM*)five), 0);
+  EXPECT_GT(BN_cmpCT((const BIGNUM*)neg_five, (const BIGNUM*)neg_seven), 0);
+}
+
+TEST(BigNumber, BinarySignAndOperatorHelpers) {
+  const bn_t value = bn_t::from_hex("010203");
+  EXPECT_EQ(bn_to_buf(value), value.to_bin());
+  EXPECT_EQ(bn_to_buf(value, 5), bn_t::from_hex("0000010203").to_bin(5));
+  EXPECT_EQ(bn_to_buf(value, 2), value.to_bin());
+
+  bn_t assigned;
+  assigned = (const BIGNUM*)value;
+  EXPECT_EQ(assigned, value);
+
+  uint64_t limbs[2] = {0x0807060504030201ULL, 0x100f0e0d0c0b0a09ULL};
+  bn_t attached;
+  attached.attach(limbs, 2);
+  EXPECT_EQ(attached.to_bin(16), bn_t::from_hex("100f0e0d0c0b0a090807060504030201").to_bin(16));
+  attached.detach();
+  EXPECT_EQ(attached, 0);
+
+  bn_t min_int64;
+  min_int64.set_int64(INT64_MIN);
+  EXPECT_EQ(min_int64.get_int64(), INT64_MIN);
+
+  bn_t inc = 7;
+  EXPECT_EQ(inc++, 7);
+  EXPECT_EQ(inc, 8);
+  EXPECT_EQ(++inc, 9);
+
+  const mod_t q(37);
+  const bn_t q_minus_1 = q.value() - 1;
+  MODULO(q) {
+    bn_t wrap = q_minus_1;
+    EXPECT_EQ(++wrap, 0);
+  }
+
+  bn_t::set_modulo(q);
+  EXPECT_TRUE(bn_t::check_modulo(q));
+  bn_t manual_wrap = q_minus_1;
+  EXPECT_EQ(++manual_wrap, 0);
+  bn_t::reset_modulo(q);
+  EXPECT_FALSE(bn_t::check_modulo(q));
+
+  bn_t arithmetic = 10;
+  arithmetic += 5;
+  EXPECT_EQ(arithmetic, 15);
+  arithmetic -= 3;
+  EXPECT_EQ(arithmetic, 12);
+  arithmetic *= 7;
+  EXPECT_EQ(arithmetic, 84);
+  arithmetic /= 6;
+  EXPECT_EQ(arithmetic, 14);
+  arithmetic /= bn_t(2);
+  EXPECT_EQ(arithmetic, 7);
+  arithmetic %= q;
+  EXPECT_EQ(arithmetic, 7);
+
+  bn_t sign_value = 5;
+  sign_value.set_sign(-1);
+  EXPECT_EQ(sign_value, -5);
+  sign_value.set_sign(1);
+  EXPECT_EQ(sign_value, 5);
+  sign_value.set_sign(0);
+  EXPECT_EQ(sign_value, 0);
+  sign_value.set_sign(-1);
+  EXPECT_EQ(sign_value, 0);
+  EXPECT_TRUE(sign_value.is_zero());
+
+  const bn_t bit_pattern = (bn_t(1) << 80) + 3;
+  EXPECT_EQ(bit_pattern.get_bit(0), 1);
+  EXPECT_EQ(bit_pattern.get_bit(1), 1);
+  EXPECT_EQ(bit_pattern.get_bit(80), 1);
+  EXPECT_EQ(bit_pattern.get_bit(79), 0);
+  EXPECT_EQ(bit_pattern.to_hex(), "0100000000000000000003");
+}
+
+TEST(BigNumber, VectorFromBinConvenienceWrapper) {
+  const mod_t q(37);
+  const std::vector<bn_t> values = {1, 36, 74};
+  const buf_t encoded = bn_t::vector_to_bin(values, 2);
+
+  const std::vector<bn_t> decoded = bn_t::vector_from_bin(encoded, 3, 2, q);
+  ASSERT_EQ(decoded.size(), 3);
+  EXPECT_EQ(decoded[0], 1);
+  EXPECT_EQ(decoded[1], 36);
+  EXPECT_EQ(decoded[2], 0);
+
+  EXPECT_TRUE(bn_t::vector_from_bin(encoded.take(encoded.size() - 1), 3, 2, q).empty());
 }
 }  // namespace

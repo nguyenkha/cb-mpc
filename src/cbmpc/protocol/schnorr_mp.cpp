@@ -1,14 +1,13 @@
-#include "schnorr_mp.h"
-
 #include <iostream>
+#include <utility>
 #include <vector>
 
-#include <cbmpc/crypto/base_ecc_secp256k1.h>
-#include <cbmpc/crypto/ro.h>
-#include <cbmpc/zk/zk_elgamal_com.h>
-#include <cbmpc/zk/zk_pedersen.h>
-
-#include "util.h"
+#include <cbmpc/internal/crypto/base_ecc_secp256k1.h>
+#include <cbmpc/internal/crypto/ro.h>
+#include <cbmpc/internal/protocol/schnorr_mp.h>
+#include <cbmpc/internal/protocol/util.h>
+#include <cbmpc/internal/zk/zk_elgamal_com.h>
+#include <cbmpc/internal/zk/zk_pedersen.h>
 
 #define _i msg
 #define _j received(j)
@@ -26,14 +25,14 @@ error_t refresh(job_mp_t& job, buf_t& sid, key_t& key, key_t& new_key) {
   return eckey::key_share_mp_t::refresh(job, sid, key, new_key);
 }
 
-error_t threshold_dkg(job_mp_t& job, ecurve_t curve, buf_t& sid, const crypto::ss::ac_t ac,
-                      const party_set_t& quorum_party_set, key_t& key) {
-  return eckey::key_share_mp_t::threshold_dkg(job, curve, sid, ac, quorum_party_set, key);
+error_t dkg_ac(job_mp_t& job, ecurve_t curve, buf_t& sid, const crypto::ss::ac_t ac,
+               const party_set_t& quorum_party_set, key_t& key) {
+  return eckey::key_share_mp_t::dkg_ac(job, curve, sid, ac, quorum_party_set, key);
 }
 
-error_t threshold_refresh(job_mp_t& job, ecurve_t curve, buf_t& sid, const crypto::ss::ac_t ac,
-                          const party_set_t& quorum_party_set, key_t& key, key_t& new_key) {
-  return eckey::key_share_mp_t::threshold_refresh(job, curve, sid, ac, quorum_party_set, key, new_key);
+error_t refresh_ac(job_mp_t& job, ecurve_t curve, buf_t& sid, const crypto::ss::ac_t ac,
+                   const party_set_t& quorum_party_set, key_t& key, key_t& new_key) {
+  return eckey::key_share_mp_t::refresh_ac(job, curve, sid, ac, quorum_party_set, key, new_key);
 }
 
 static bn_t calc_eddsa_HRAM(const ecc_point_t& R, const ecc_point_t& Q, mem_t in) {
@@ -43,6 +42,7 @@ static bn_t calc_eddsa_HRAM(const ecc_point_t& R, const ecc_point_t& Q, mem_t in
 }
 
 error_t sign(job_mp_t& job, key_t& key, const mem_t& msg, party_idx_t sig_receiver, buf_t& sig, variant_e variant) {
+  sig.free();
   error_t rv = UNINITIALIZED_ERROR;
   std::vector<mem_t> msgs(1, msg);
   std::vector<buf_t> sigs;
@@ -53,12 +53,12 @@ error_t sign(job_mp_t& job, key_t& key, const mem_t& msg, party_idx_t sig_receiv
 
 error_t sign_batch(job_mp_t& job, key_t& key, const std::vector<mem_t>& msgs, party_idx_t sig_receiver,
                    std::vector<buf_t>& sigs, variant_e variant) {
+  sigs.clear();
   error_t rv = UNINITIALIZED_ERROR;
 
   int n = job.get_n_parties();
   int i = job.get_party_idx();
   crypto::pname_t pname = job.get_name();
-  sigs.resize(msgs.size());
 
   ecurve_t curve = key.curve;
   const mod_t& q = curve.order();
@@ -106,7 +106,9 @@ error_t sign_batch(job_mp_t& job, key_t& key, const std::vector<mem_t>& msgs, pa
     if (h._j != h._i) return coinbase::error(E_CRYPTO);
     if (Ri._j.size() != msgs.size())
       return coinbase::error(E_CRYPTO, "schnorrmp::sign_batch: inconsistent batch size (Ri)");
-    // Verification of Ri._j is done in the zk verify function
+    for (const auto& point : Ri._j) {
+      if (rv = curve.check(point)) return coinbase::error(rv, "schnorr_mp_t::sign_batch: check Ri failed");
+    }
     if (rv = pi._j.verify(Ri._j, sid._i, j)) return coinbase::error(rv, "schnorr_mp_t::sign_batch: verify pi failed");
 
     if (rv = coinbase::crypto::commitment_t(sid_i._j, job.get_pid(j)).set(rho._j, c._j).open(Ri._j)) return rv;
@@ -133,6 +135,8 @@ error_t sign_batch(job_mp_t& job, key_t& key, const std::vector<mem_t>& msgs, pa
       return coinbase::error(E_BADARG, "BIP340 variant requires secp256k1 curve");
     bn_t rx, ry;
     for (size_t l = 0; l < msgs.size(); l++) {
+      if (msgs[l].size != 32) return coinbase::error(E_BADARG, "schnorr_mp: BIP340 msg size != 32");
+      if (!msgs[l].data) return coinbase::error(E_BADARG, "schnorr_mp: BIP340 msg is null");
       R[l].get_coordinates(rx, ry);
       if (ry.is_odd()) ki[l] = q - ki[l];
       e[l] = crypto::bip340::hash_message(rx, key.Q, msgs[l]);
@@ -150,6 +154,7 @@ error_t sign_batch(job_mp_t& job, key_t& key, const std::vector<mem_t>& msgs, pa
 
   if (rv = job.send_message_all_to_one(sig_receiver, ssi)) return rv;
 
+  std::vector<buf_t> candidate_sigs(msgs.size());
   if (job.is_party_idx(sig_receiver)) {
     std::vector<bn_t> ss(msgs.size(), 0);
     for (int j = 0; j < n; j++) {
@@ -161,15 +166,15 @@ error_t sign_batch(job_mp_t& job, key_t& key, const std::vector<mem_t>& msgs, pa
     crypto::ecc_pub_key_t verify_key(key.Q);
     if (key.curve == crypto::curve_ed25519) {
       for (size_t l = 0; l < msgs.size(); l++) {
-        sigs[l] = R[l].to_compressed_bin() + ss[l].to_bin(crypto::ed25519::prv_bin_size()).rev();
-        if (rv = verify_key.verify(msgs[l], sigs[l])) return coinbase::error(rv, "ed25519 verify failed");
+        candidate_sigs[l] = R[l].to_compressed_bin() + ss[l].to_bin(crypto::ed25519::prv_bin_size()).rev();
+        if (rv = verify_key.verify(msgs[l], candidate_sigs[l])) return coinbase::error(rv, "ed25519 verify failed");
       }
     } else if (key.curve == crypto::curve_secp256k1) {
       bn_t rx, ry;
       for (size_t l = 0; l < msgs.size(); l++) {
         R[l].get_coordinates(rx, ry);
-        sigs[l] = rx.to_bin(32) + ss[l].to_bin(32);
-        if (rv = crypto::bip340::verify(verify_key, msgs[l], sigs[l])) {
+        candidate_sigs[l] = rx.to_bin(32) + ss[l].to_bin(32);
+        if (rv = crypto::bip340::verify(verify_key, msgs[l], candidate_sigs[l])) {
           return coinbase::error(rv, "bip340 verify failed");
         }
       }
@@ -177,6 +182,7 @@ error_t sign_batch(job_mp_t& job, key_t& key, const std::vector<mem_t>& msgs, pa
       cb_assert(false && "schnorr_mp: non-existing variant");
     }
   }
+  sigs = std::move(candidate_sigs);
   return SUCCESS;
 }
 

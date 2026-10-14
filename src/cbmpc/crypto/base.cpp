@@ -1,39 +1,17 @@
-#include "base.h"
+#include <utility>
 
-#include <cbmpc/core/log.h>
-
-#include "scope.h"
+#include <cbmpc/internal/core/log.h>
+#include <cbmpc/internal/crypto/base.h>
+#include <cbmpc/internal/crypto/scope.h>
 
 namespace coinbase::crypto {
 // clang-format off
-template<> void scoped_ptr_t<EVP_MD_CTX>                ::free(EVP_MD_CTX* ptr)                    { EVP_MD_CTX_destroy(ptr);                    }
-template<> void scoped_ptr_t<BIO>                       ::free(BIO* ptr)                           { BIO_free(ptr);                              }
-template<> void scoped_ptr_t<BIGNUM>                    ::free(BIGNUM* ptr)                        { BN_clear_free(ptr);                         }
-template<> void scoped_ptr_t<BN_CTX>                    ::free(BN_CTX* ptr)                        { BN_CTX_free(ptr);          }
-template<> void scoped_ptr_t<EVP_CIPHER_CTX>            ::free(EVP_CIPHER_CTX* ptr)                { EVP_CIPHER_CTX_free(ptr);                   }
-template<> void scoped_ptr_t<EC_POINT>                  ::free(EC_POINT* ptr)                      { EC_POINT_clear_free(ptr);                   }
-template<> void scoped_ptr_t<EC_GROUP>                  ::free(EC_GROUP* ptr)                      { EC_GROUP_free(ptr);                         }
-template<> void scoped_ptr_t<ECDSA_SIG>                 ::free(ECDSA_SIG* ptr)                     { ECDSA_SIG_free(ptr);                        }
-template<> void scoped_ptr_t<EVP_PKEY>                  ::free(EVP_PKEY* ptr)                      { EVP_PKEY_free(ptr);                         }
-template<> void scoped_ptr_t<X509>                      ::free(X509* ptr)                          { X509_free(ptr);                             }
-template<> void scoped_ptr_t<X509_REQ>                  ::free(X509_REQ* ptr)                      { X509_REQ_free(ptr);                         }
-template<> void scoped_ptr_t<PKCS8_PRIV_KEY_INFO>       ::free(PKCS8_PRIV_KEY_INFO* ptr)           { PKCS8_PRIV_KEY_INFO_free(ptr);              }
-template<> void scoped_ptr_t<STACK_OF(X509_INFO)>       ::free(STACK_OF(X509_INFO)* ptr)           { sk_X509_INFO_pop_free(ptr, X509_INFO_free); }
-template<> void scoped_ptr_t<PKCS12>                    ::free(PKCS12* ptr)                        { PKCS12_free(ptr);                           }
-template<> void scoped_ptr_t<X509_SIG>                  ::free(X509_SIG* ptr)                      { X509_SIG_free(ptr);                         }
-template<> void scoped_ptr_t<X509_STORE_CTX>            ::free(X509_STORE_CTX* ptr)                { X509_STORE_CTX_free(ptr);                   }
-template<> void scoped_ptr_t<X509_STORE>                ::free(X509_STORE* ptr)                    { X509_STORE_free(ptr);                       }
-template<> void scoped_ptr_t<PKCS7>                     ::free(PKCS7* ptr)                         { PKCS7_free(ptr);                            }
-template<> void scoped_ptr_t<STACK_OF(PKCS7)>           ::free(STACK_OF(PKCS7)* ptr)               { sk_PKCS7_pop_free(ptr, PKCS7_free);         }
-template<> void scoped_ptr_t<STACK_OF(PKCS12_SAFEBAG)>  ::free(STACK_OF(PKCS12_SAFEBAG)* ptr)      { sk_PKCS12_SAFEBAG_pop_free(ptr, PKCS12_SAFEBAG_free); }
-template<> void scoped_ptr_t<EVP_PKEY_CTX>              ::free(EVP_PKEY_CTX* ptr)                  { EVP_PKEY_CTX_free(ptr);                     }
+template<> void scoped_ptr_t<BN_CTX>       ::free(BN_CTX* ptr)       { BN_CTX_free(ptr);              }
+template<> void scoped_ptr_t<EC_POINT>     ::free(EC_POINT* ptr)     { EC_POINT_clear_free(ptr);      }
+template<> void scoped_ptr_t<EVP_PKEY>     ::free(EVP_PKEY* ptr)     { EVP_PKEY_free(ptr);            }
+template<> void scoped_ptr_t<EVP_PKEY_CTX> ::free(EVP_PKEY_CTX* ptr) { EVP_PKEY_CTX_free(ptr);        }
 
-template<> EVP_MD_CTX*  scoped_ptr_t<EVP_MD_CTX> ::copy(EVP_MD_CTX* ptr)   { EVP_MD_CTX* new_ptr = EVP_MD_CTX_new(); EVP_MD_CTX_copy(new_ptr, ptr); return new_ptr; }
-template<> BIGNUM*      scoped_ptr_t<BIGNUM>     ::copy(BIGNUM* ptr)       { return BN_dup(ptr);                         }
-template<> EVP_PKEY*    scoped_ptr_t<EVP_PKEY>   ::copy(EVP_PKEY* ptr)     { EVP_PKEY_up_ref(ptr); return ptr;           }
-template<> X509*        scoped_ptr_t<X509>       ::copy(X509* ptr)         { return X509_dup(ptr);                       }
-template<> X509_REQ*    scoped_ptr_t<X509_REQ>   ::copy(X509_REQ* ptr)     { return X509_REQ_dup(ptr);                   }
-template<> PKCS7*       scoped_ptr_t<PKCS7>      ::copy(PKCS7* ptr)        { return PKCS7_dup(ptr);                      }
+template<> EVP_PKEY* scoped_ptr_t<EVP_PKEY>::copy(EVP_PKEY* ptr) { EVP_PKEY_up_ref(ptr); return ptr; }
 // clang-format on
 
 #ifdef __x86_64__
@@ -74,9 +52,7 @@ initializer_t::initializer_t() {
 #endif
 }
 
-error_t error(const std::string& text, bool print_stack) {
-  return coinbase::error(E_CRYPTO, ECATEGORY_CRYPTO, text, print_stack);
-}
+error_t error(const std::string& text) { return coinbase::error(E_CRYPTO, ECATEGORY_CRYPTO, text); }
 
 error_t openssl_error(const std::string& text) { return openssl_error(E_CRYPTO, text); }
 
@@ -93,7 +69,7 @@ error_t openssl_error(int rv, const std::string& text) {
   std::string message = text;
   if (message.empty()) message = "OPENSSL error: ";
 
-  return coinbase::error(rv, ECATEGORY_OPENSSL, message + "(" + strext::itoa(err) + ") " + ssl_message, true);
+  return coinbase::error(rv, ECATEGORY_OPENSSL, message + "(" + strext::itoa(err) + ") " + ssl_message);
 }
 
 /**
@@ -107,7 +83,7 @@ void gen_random(byte_ptr output, int size) {
   cb_assert(res > 0);
 }
 
-void gen_random(mem_t out) { gen_random(out.data, out.size); }
+void gen_random(mem_t out) { gen_random(const_cast<byte_ptr>(out.data), out.size); }
 
 bool gen_random_bool() {
   uint8_t temp = 0;
@@ -121,11 +97,14 @@ buf_t gen_random(int size) {
   return output;
 }
 
-buf_t gen_random_bitlen(int bitlen) { return gen_random(coinbase::bits_to_bytes(bitlen)); }
+buf_t gen_random_bitlen(int bitlen) {
+  cb_assert(bitlen >= 0);
+  return gen_random(coinbase::bits_to_bytes(bitlen));
+}
 
 coinbase::bits_t gen_random_bits(int count) {
   coinbase::bits_t out(count);
-  gen_random(mem_t(out).data, coinbase::bits_to_bytes(count));
+  gen_random(const_cast<byte_ptr>(mem_t(out).data), coinbase::bits_to_bytes(count));
   return out;
 }
 
@@ -135,20 +114,6 @@ int evp_cipher_ctx_t::update(mem_t in, byte_ptr out) const {
   int out_size = 0;
   if (0 < EVP_CipherUpdate(ctx, out, &out_size, in.data, in.size)) return out_size;
   return -1;
-}
-
-static const EVP_CIPHER* cipher_aes_ecb(int key_size) {
-  switch (key_size) {
-    case 16:
-      return EVP_aes_128_ecb();
-    case 24:
-      return EVP_aes_192_ecb();
-    case 32:
-      return EVP_aes_256_ecb();
-  }
-
-  cb_assert(false);
-  return NULL;
 }
 
 // ------------------------- AES-CTR ---------------------------
@@ -208,13 +173,18 @@ void aes_gcm_t::encrypt(mem_t key, mem_t iv, mem_t auth, int tag_size, mem_t in,
 }
 
 error_t aes_gcm_t::decrypt(mem_t key, mem_t iv, mem_t auth, int tag_size, mem_t in, buf_t& out) {
+  out.free();
   if (in.size < tag_size) return coinbase::error(E_CRYPTO);
 
   aes_gcm_t gcm;
   gcm.decrypt_init(key, iv, auth);
   int data_size = in.size - tag_size;
-  gcm.cipher.update(mem_t(in.data, data_size), out.alloc(data_size));
-  return gcm.decrypt_final(mem_t(in.data + data_size, tag_size));
+  buf_t candidate(data_size);
+  if (gcm.cipher.update(mem_t(in.data, data_size), candidate.data()) != data_size) return coinbase::error(E_CRYPTO);
+  if (error_t rv = gcm.decrypt_final(mem_t(in.data + data_size, tag_size))) return rv;
+
+  out = std::move(candidate);
+  return SUCCESS;
 }
 
 void aes_gcm_t::encrypt_init(mem_t key, mem_t iv, mem_t auth) {
@@ -233,7 +203,7 @@ void aes_gcm_t::encrypt_final(mem_t tag)  // tag.data is output
   int out_size = 0;
   cb_assert(0 < EVP_EncryptFinal_ex(cipher.ctx, NULL, &out_size));
   cb_assert(out_size == 0);
-  cb_assert(0 < EVP_CIPHER_CTX_ctrl(cipher.ctx, EVP_CTRL_GCM_GET_TAG, tag.size, tag.data));
+  cb_assert(0 < EVP_CIPHER_CTX_ctrl(cipher.ctx, EVP_CTRL_GCM_GET_TAG, tag.size, const_cast<byte_ptr>(tag.data)));
 }
 
 void aes_gcm_t::decrypt_init(mem_t key, mem_t iv, mem_t auth) {
@@ -248,7 +218,7 @@ void aes_gcm_t::decrypt_init(mem_t key, mem_t iv, mem_t auth) {
 }
 
 error_t aes_gcm_t::decrypt_final(mem_t tag) {
-  cb_assert(0 < EVP_CIPHER_CTX_ctrl(cipher.ctx, EVP_CTRL_GCM_SET_TAG, tag.size, tag.data));
+  cb_assert(0 < EVP_CIPHER_CTX_ctrl(cipher.ctx, EVP_CTRL_GCM_SET_TAG, tag.size, const_cast<byte_ptr>(tag.data)));
   int dummy = 0;
   if (0 >= EVP_DecryptFinal_ex(cipher.ctx, NULL, &dummy)) return coinbase::error(E_CRYPTO);
   return SUCCESS;
@@ -280,7 +250,7 @@ void aes_gmac_t::final(mem_t out) {
   cb_assert(0 < EVP_EncryptUpdate(ctx, &dummy, &out_size, &dummy, 0));
   cb_assert(0 < EVP_EncryptFinal_ex(ctx, NULL, &out_size));
   cb_assert(out_size == 0);
-  cb_assert(0 < EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, out.size, out.data));
+  cb_assert(0 < EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, out.size, const_cast<byte_ptr>(out.data)));
 }
 
 buf_t aes_gmac_t::final(int size) {

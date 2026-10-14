@@ -1,5 +1,7 @@
-#include <cbmpc/core/log.h>
-#include <cbmpc/crypto/base.h>
+#include <algorithm>
+
+#include <cbmpc/internal/core/log.h>
+#include <cbmpc/internal/crypto/base.h>
 
 namespace coinbase::crypto {
 
@@ -19,10 +21,21 @@ void paillier_t::convert(coinbase::converter_t& converter) {
   }
 
   if (!converter.is_write()) {
-    if (has_private)
+    if (converter.is_error()) return;
+    if (N.get_bits_count() > bit_size) {
+      converter.set_error();
+      return;
+    }
+    if (has_private) {
+      // This path rebuilds a private key from serialized state without semantically validating `p`/`q`.
+      // It is intended for trusted local blobs.
       update_private();
-    else
+    } else {
+      // This path only rebuilds cached public state from the deserialized modulus.
+      // `mod_t::convert()` already enforces the basic modulus representation, but callers are still responsible
+      // for any higher-level/context-specific validation at the boundary after deserialization.
       update_public();
+    }
   }
 }
 
@@ -40,6 +53,8 @@ void paillier_t::generate() {
 }
 
 void paillier_t::update_public() {
+  // Internal helper: callers must ensure `N` has already been validated / constructed as a valid `mod_t`.
+  // The untrusted-input boundary is handled by `create_pub()` or by `mod_t::convert()` during deserialization.
   // calculate N^2
   NN = mod_t(N * N, /* multiplicative_dense */ true);
 }
@@ -60,6 +75,25 @@ void paillier_t::update_private() {
   phi_N = (p - 1) * (q - 1);
 
   inv_phi_N = N.inv(phi_N);
+
+  // Precompute N^{-1} mod 2^bit_size for constant-time L(u) extraction during decryption.
+  // (See `paillier_t::decrypt` for details.)
+  {
+    bn_t two_pow = bn_t(1) << bit_size;  // 2^2048
+    auto* inv = BN_mod_inverse(inv_N_mod_2k, N.value(), two_pow, bn_t::thread_local_storage_bn_ctx());
+    cb_assert(inv && "paillier_t::update_private: failed to invert N mod 2^bit_size");
+
+    constexpr int BN_ULONG_BITS = int(sizeof(BN_ULONG) * 8);
+    static_assert(bit_size % BN_ULONG_BITS == 0, "Paillier bit_size must be BN_ULONG-word aligned");
+    constexpr int k_words = bit_size / BN_ULONG_BITS;
+    BIGNUM& inv_bn = *(BIGNUM*)inv_N_mod_2k;
+    cb_assert(bn_wexpand(&inv_bn, k_words));
+    // Zero any unused high words and force a fixed-top representation so decrypt can read `d[0..k_words)`.
+    for (int i = inv_bn.top; i < k_words; i++) inv_bn.d[i] = 0;
+    inv_bn.top = k_words;
+    inv_bn.neg = 0;
+    inv_bn.flags |= BN_FLG_FIXED_TOP | BN_FLG_CONSTTIME;
+  }
 
   // p^2
   bn_t p_sqr = p * p;
@@ -111,10 +145,13 @@ void paillier_t::create_prv(const bn_t& theN, const bn_t& theP, const bn_t& theQ
   update_private();
 }
 
-void paillier_t::create_pub(const bn_t& theN) {
+error_t paillier_t::create_pub(const bn_t& theN) {
+  if (!mod_t::is_valid_modulus(theN)) return E_BADARG;
+  if (theN.get_bits_count() > bit_size) return E_BADARG;
   N = mod_t(theN, /* multiplicative_dense */ true);
   has_private = false;
   update_public();
+  return SUCCESS;
 }
 
 bn_t paillier_t::add_ciphers(const bn_t& src1, const bn_t& src2, crypto::paillier_t::rerand_e rerand_mode) const {
@@ -211,12 +248,41 @@ bn_t paillier_t::decrypt(const bn_t& src) const {
   }
 
   // Side-channel note:
-  // This is the Paillier L(u) step: L(c1) = (c1 - 1) / N, with c1 ∈ Z_{N^2}. This division uses generic bignum
-  // arithmetic and is not designed to be strictly constant-time with respect to `c1`'s value.
-  // We acknowledge and accept the residual timing side-channel risk, but in our current threat model Paillier
-  // decryption is not exposed as a high-resolution timing oracle, so we consider this risk negligible in practice.
-  // If that assumption changes, replace this with a fixed-size, constant-time extraction of L(c1).
-  bn_t m1 = (c1 - 1) / N;
+  // This is the Paillier L(u) step: L(c1) = (c1 - 1) / N, with c1 ∈ Z_{N^2}.
+  // For odd N, division by N can be replaced by multiplication with N^{-1} modulo 2^k:
+  //   (c1 - 1) = N * L(c1)  ⇒  L(c1) ≡ (c1 - 1) * N^{-1} (mod 2^k)
+  // With k = 2048 and 0 ≤ L(c1) < N < 2^k, this recovers L(c1) exactly from the low k bits.
+  constexpr int BN_ULONG_BITS = int(sizeof(BN_ULONG) * 8);
+  static_assert(bit_size % BN_ULONG_BITS == 0, "Paillier bit_size must be BN_ULONG-word aligned");
+  constexpr int k_words = bit_size / BN_ULONG_BITS;
+
+  const BIGNUM& c1_bn = *(const BIGNUM*)c1;
+  cb_assert(c1_bn.top >= 0);
+
+  // tmp_low = (c1 - 1) mod 2^k (little-endian words)
+  BN_ULONG tmp_low[k_words];
+  BN_ULONG borrow = 1;
+  for (int i = 0; i < k_words; i++) {
+    BN_ULONG w = 0;
+    if (i < c1_bn.top) w = c1_bn.d[i];
+    tmp_low[i] = w - borrow;
+    borrow = (borrow && (w == 0)) ? 1 : 0;
+  }
+
+  // m1_words = tmp_low * inv_N_mod_2k mod 2^k
+  const BIGNUM& inv_bn = *(const BIGNUM*)inv_N_mod_2k;
+  cb_assert(inv_bn.top == k_words);
+  BN_ULONG prod[k_words * 2];
+  bn_mul_normal(prod, tmp_low, k_words, inv_bn.d, k_words);
+
+  bn_t m1;
+  BIGNUM& m1_bn = *(BIGNUM*)m1;
+  cb_assert(bn_wexpand(&m1_bn, k_words));
+  std::copy(prod, prod + k_words, m1_bn.d);
+  m1_bn.top = k_words;
+  m1_bn.neg = 0;
+  m1_bn.flags |= BN_FLG_FIXED_TOP | BN_FLG_CONSTTIME;
+
   MODULO(N) m1 *= inv_phi_N;
   return m1;
 }
@@ -248,6 +314,7 @@ bn_t paillier_t::get_cipher_randomness(const bn_t& plain, const bn_t& cipher) co
 }
 
 error_t paillier_t::verify_cipher(const mod_t& N, const mod_t& NN, const bn_t& cipher) {
+  vartime_scope_t vartime_scope;
   error_t rv = UNINITIALIZED_ERROR;
   if (rv = coinbase::crypto::check_open_range(0, cipher, NN)) return rv;
   if (!mod_t::coprime(cipher, N)) return coinbase::error(E_CRYPTO);
@@ -275,6 +342,7 @@ error_t paillier_t::rand_N_star(bn_t& r, bool resample_until_coprime) const {
 
 error_t paillier_t::batch_verify_ciphers(const bn_t* ciphers, int n) const {
   if (n == 0) return SUCCESS;
+  vartime_scope_t vartime_scope;
   error_t rv = UNINITIALIZED_ERROR;
   for (int i = 0; i < n; i++) {
     if (rv = coinbase::crypto::check_open_range(0, ciphers[i], NN)) return rv;

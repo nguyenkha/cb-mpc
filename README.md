@@ -4,8 +4,14 @@
 
 - [Introduction](#introduction)
   - [Overview](#overview)
+  - [What cb-mpc Does and Does Not Do](#what-cb-mpc-does-and-does-not-do)
   - [Key Features](#key-features)
+- [High-level Public API vs the Full API](#high-level-public-api-vs-the-full-api)
 - [Directory Structure](#directory-structure)
+- [Supported Runtime and Deployment Environments](#supported-runtime-and-deployment-environments)
+  - [Key Management Responsibilities](#key-management-responsibilities)
+- [Initial Clone and Setup](#initial-clone-and-setup)
+- [Building the Code](#building-the-code)
 - [Supported Protocols](#supported-protocols)
 - [Design Principles and Secure Usage](#design-principles-and-secure-usage)
 - [External Dependencies](#external-dependencies)
@@ -13,6 +19,7 @@
     - [Internal Header Files](#internal-header-files)
     - [RSA OAEP Padding Modification](#rsa-oaep-padding-modification)
   - [Bitcoin Secp256k1 Curve implementation](#bitcoin-secp256k1-curve-implementation)
+- [Go Wrappers](#go-wrappers)
 
 
 # Introduction
@@ -22,6 +29,23 @@ Welcome to the Coinbase Open Source MPC Library. This repository provides the es
 ## Overview
 
 This cryptographic library is based on the MPC library used at Coinbase to protect cryptoassets, with modifications to make it suitable for public use. The library is designed as a general-purpose cryptographic library for securing cryptoasset keys, allowing developers to build their own applications. Coinbase has invested significantly in building a secure MPC library, and it is our hope that this library will help those interested in deploying MPC to do so easily and securely.
+
+## What cb-mpc Does and Does Not Do
+
+`cb-mpc` is a native cryptographic library for MPC protocols. It gives application developers the building blocks needed to generate and refresh keyshares, derive supported keys, produce MPC signatures, and support key-backup workflows via publicly verifiable encryption (PVE).
+
+`cb-mpc` does:
+
+- Implement MPC cryptographic protocols and expose them through public APIs.
+- Execute those protocols with input validation and safer defaults in the high-level public API.
+
+`cb-mpc` does not:
+
+- Provide a hosted signing service, wallet backend, or deployment platform.
+- Manage peer authentication, transport security, storage, backups, or access-control policy for you.
+- Decide when a signature should be allowed, what transaction should be signed, or how operational recovery and incident handling should work in your environment.
+
+If you build on the lower-level full API (including internal and low-level functionality), more validation and protocol-composition responsibility shifts to the integrating application. See [High-level Public API vs the Full API](#high-level-public-api-vs-the-full-api) and [Supported Runtime and Deployment Environments](#supported-runtime-and-deployment-environments) for more detail.
 
 ## Key Features
 
@@ -44,8 +68,7 @@ Although this library is designed for general use, we have included examples sho
 
 1. **HD-MPC**: This is the MPC version of an HD-Wallet where the keys are derived according to an HD tree. The library contains the source code for how to generate keys and also to derive keys for the tree (see [src/cbmpc/protocol/hd_keyset_ecdsa_2p.cpp](src/cbmpc/protocol/hd_keyset_ecdsa_2p.cpp)). This can be used to perform a batch ECDSA signature or sequential signatures as shown in the test file, [tests/unit/protocol/test_hdmpc_ecdsa_2p.cpp](tests/unit/protocol/test_hdmpc_ecdsa_2p.cpp). We stress that this is not BIP32-compliant, but is indistinguishable from it; more details can be found in [docs/theory/mpc-friendly-derivation-theory.pdf](docs/theory/mpc-friendly-derivation-theory.pdf).
 2. **ECDSA-MPC with Threshold EC-DKG**: This example showcases how a threshold of parties (or more generally any quorum of parties according to a given access structure) can perform ECDSA-MPC. The code can be found in [src/cbmpc/protocol/ec_dkg.cpp](src/cbmpc/protocol/ec_dkg.cpp) and its usage can be found in [tests/unit/protocol/test_ecdsa_mp.cpp](tests/unit/protocol/test_ecdsa_mp.cpp).
-3. **ECDSA-MPC with Threshold Backup**: This example showcases various things. First, the code is in Go, [demos-go/examples/ecdsa-mpc-with-backup/main.go](demos-go/examples/ecdsa-mpc-with-backup/main.go) and therefore showcases how the C++ core library can be used in a Go project. Second, it showcases how different protocols can be combined to create a full solution. In this case, we use PVE (publicly-verifiable encryption) as a way of creating verifiable backup of keyshares according to an access structure (e.g., a threshold of `t` out of `n` parties). The code shows how the backup can be created and restored. It also shows how the backup can be used to generate a signature. Note that the key generation can be done using the threshold EC-DKG protocol, which is showcased in the previous example. However, for simplicity a normal additive DKG is used in this example.
-4. **Various other uses cases, including ZKPs**: The demo code under [demos-cpp](demos-cpp) and [demos-go](demos-go), and the tests under [tests](tests), contain various examples of how the different protocols can be used. Specifically, for the case of ZKPs, the tests can be found under [tests/unit/zk/test_zk.cpp](tests/unit/zk/test_zk.cpp).
+3. **Various other uses cases, including ZKPs**: The demo code under [demo-cpp](demo-cpp) and the tests under [tests](tests) contain various examples of how the different protocols can be used. Specifically, for the case of ZKPs, the tests can be found under [tests/unit/zk/test_zk.cpp](tests/unit/zk/test_zk.cpp).
 
 The library comes with various tests and checks to increase the confidence in the code including:
 
@@ -54,19 +77,76 @@ The library comes with various tests and checks to increase the confidence in th
 - Benchmarks: See `make bench`
 - Linting: See `make lint`
 
+# High-level Public API vs the Full API
+
+The cb-mpc library contains two levels of APIs, a public one that contains the API for calling high-level MPC protocols like DKG, threshold signing and publicly-verifiable encryption for backup. These APIs are simple to use, and are recommended for those wishing to use the cb-mpc protocols as is. The second level contains the full cb-mpc API and includes all mid and low-level functions as well. These APIs are intended for users wishing to modify protocols or implement other protocols using the cb-mpc infrastructure. We stress that all functions in the public API are safe, including validation of all externally received inputs. In contrast, not all lower-level APIs include all such validations. For example, an elliptic curve point received from another party in a protocol needs to be validated once and not every time it is used. In addition, some zero-knowledge proofs may depend on other zero-knowledge proofs already being validated. This is taken care of in the public API, but the user is responsible for ensuring all of this when using the lower-level full API. Note that the Coinbase HackerOne bug bounty requires finding a bug in the public API for it to be consider Medium or above. See [BUG_BOUNTY.md](BUG_BOUNTY.md) for details.
+
 # Directory Structure
 
 - `docs`: the pdf files that define the detailed cryptographic specification and theoretical documentation (you need to enable git-lfs to get them)
-- `src`: contains the cpp library and its unit tests
-- `cb-mpc-go`: contains an example of how a go wrapper for the cpp library can be written
-- `demos-cpp`: a collection of examples of common use cases in c++
-- `demos-go`: examples of how the c++ library can be used in Golang
-  - `demos/cb-mpc-go`: Go wrapper of the cb-mpc
-  - `demos/mocknet`: an example of how a network infra can be implemented (for demo purposes)
-  - `demos/examples`: examples of some multiparty computation tasks in Golang
+- `include`: public headers (installed in both `public` and `full` install modes)
+  - Public C++ API wrappers: `include/cbmpc/api/` (`coinbase::api`)
+  - Public C API (stable ABI) for wrappers written in other languages such as Go, Rust, etc.: `include/cbmpc/c_api/` (`cbmpc_*`)
+- `include-internal`: internal headers (installed only in `full` mode), included as `<cbmpc/internal/...>`
+- `src`: C++ implementation sources
+- `demo-cpp`: a collection of examples of common use cases in c++
 - `scripts`: a collection of scripts used by the Makefile
 - `tools/benchmark`: a collection of benchmarks for the library
 - `tests/{dudect,integration,unit}`: a collection of tests for the library
+
+# Supported Runtime and Deployment Environments
+
+This repository provides a native C++ cryptographic library. It is intended to be embedded into backend services, native applications, and other environments where the calling application can control process isolation, network transport, and secret storage.
+
+The environments that we support are:
+
+- **Native development:** 64-bit macOS (`x86_64` and Apple Silicon) and 64-bit Linux
+- **Containerized / CI environment:** Linux in the provided Docker image
+- **Compiler/toolchain guidance:** C++17 with Clang 20 or newer is recommended for the closest match to our testing environment
+
+Both native macOS development and the provided Linux Docker environment are intended to be ways to build and test the library. GitHub workflows currently run on Linux using the Docker image.
+
+This library is **not** a hosted service and does **not** provide a production networking stack, deployment framework, key-management system, or transport security layer. In production deployments, the integrating application is responsible for:
+
+- Authenticating peers and protecting transport channels (for example, via mutually authenticated TLS).
+- Protecting secret material at rest and in memory.
+- Managing process/container isolation, rollout, monitoring, and incident response.
+
+The library is intended for native environments where the integrating application can enforce those controls. In an MPC deployment, that may mean all parties run in backend services or that some parties run in native client applications on supported platforms. Other targets, including 32-bit systems, browsers, WebAssembly, Windows, and mobile platforms, are not supported.
+
+## Key Management Responsibilities
+
+`cb-mpc` implements MPC key-generation (dkg and local generation), refresh, derivation, and signing protocols. It does not provide a custody service, policy engine, or application workflow around those protocols.
+
+In the public API, calls like `dkg*` and `refresh*` return opaque `key_blob` / `keyset_blob` values with each party's share to each party. Those blobs are later passed back into `sign*`, `refresh*`, `derive*`, and related APIs. This means the integrating application owns the lifecycle of those blobs and must treat them as secret key material.
+
+The integrating application is responsible for:
+
+- Keeping each party's blob separate and treating it like a private keyshare; do not log it or send one party's stored blob to another party.
+- Encrypting stored blobs and backups with application-managed protection, ideally using envelope encryption backed by an HSM, KMS, or secure enclave.
+- Authenticating and authorizing signing requests before invoking the library.
+- Passing the original message to EdDSA APIs, and for ECDSA or BIP340 Schnorr signing APIs, constructing the correct transaction or message preimage and applying the right hashing/domain-separation rules.
+- Coordinating backup, restore, refresh/rotation, and revocation/deletion of shares in the application's own storage and workflow layer.
+  See [refresh coordination](SECURE_USAGE.md#refresh-coordination).
+- Authorizing PVE-AC recovery and encrypting recovery partial decryptions to the authorized recipient before forwarding. These partial decryptions are sensitive: anyone who collects partial decryptions from a quorum can use them to recover the backed-up values. See [recipient-protected recovery](SECURE_USAGE.md#pve-ac-recovery-partial-decryptions-and-recipient-protection) and the [PVE demo](demo-api/pve/README.md). The same protection is needed for [TDH2 partial decryptions](SECURE_USAGE.md#tdh2-partial-decryptions).
+- Enforcing audit, approval, replay-protection, and incident-response controls appropriate for the deployment.
+
+A few practical tips:
+
+- If a party loses its only local `key_blob` / `keyset_blob` and no protected backup exists, recovery may depend on the protocol and access structure; do not assume `cb-mpc` can recreate that party-local secret material for you.
+- Maintain tested, encrypted backups and a recovery plan for lost, corrupted, or withheld shares. For supported signing key types, the relevant public API exposes `detach_private_scalar`, `get_public_share_compressed`, and `attach_private_scalar` helpers for application-managed backup and restore flows, including verifiable backup schemes such as publicly verifiable encryption (PVE). Follow each protocol's API guidance for the detached output: in particular, an ECDSA-2P P1 scalar-detached blob retains sensitive Paillier material and must be protected like the full key blob.
+  PVE scalar verification alone does not establish complete P1 recoverability; see
+  [ECDSA-2P P1 backup limitations](SECURE_USAGE.md#ecdsa-2p-p1-backup-limitations).
+- Use the corresponding `refresh*` APIs when you want fresh shares for the same (combined) key; if your operational policy requires replacing the key entirely, run a new `dkg*` flow and migrate in the application layer.
+- If compromise is suspected, stop signing with the affected material until the application's incident process decides whether to refresh the shares under controlled conditions or retire the key entirely.
+
+The library is responsible for:
+
+- Executing the cryptographic protocol once the caller provides the correct participants, transport, and local key blob.
+- Returning outputs such as signatures, refreshed shares, and derived key material.
+- Providing helper APIs for tasks like public-key extraction and backup/restore-related key-blob manipulation.
+
+For transport, opaque blob handling, session identifiers, and other operational security requirements, see [SECURE_USAGE.md](SECURE_USAGE.md).
 
 # Initial Clone and Setup
 
@@ -78,7 +158,7 @@ git submodule update --init --recursive
 
 Furthermore, to obtain the documentations (in pdf form), you need to enable [git-lfs](https://git-lfs.com/)
 
-# Building the code
+# Building the Code
 
 ## Build Modes
 
@@ -88,11 +168,11 @@ There are three build modes available:
 - **Test**: This mode enables security checks and validations to ensure the code is robust and secure.
 - **Release**: This mode applies the highest level of optimization for maximum performance and disables checks to improve runtime efficiency.
 
-## On macOS
+## Native Builds
 
 ### OpenSSL
 
-The library depends on a **custom build of OpenSSL 3.2.0** with specific modifications (see [External Dependencies](#external-dependencies)). You must build this custom version before compiling the library.
+The library depends on a **custom build of OpenSSL 3.6.4** with specific modifications (see [External Dependencies](#external-dependencies)). You must build this custom version before compiling the library.
 
 **Quick Start:**
 ```bash
@@ -100,27 +180,33 @@ The library depends on a **custom build of OpenSSL 3.2.0** with specific modific
 make openssl
 
 # Or use platform-specific targets:
+make openssl-linux      # for Linux
 make openssl-macos      # for x86_64
 make openssl-macos-m1   # for ARM64 (Apple Silicon)
 ```
 
 **Manual Build:**
 ```bash
+scripts/openssl/build-static-openssl-linux.sh      # for Linux
+# or
 scripts/openssl/build-static-openssl-macos.sh      # for x86_64
 # or
 scripts/openssl/build-static-openssl-macos-m1.sh   # for ARM64
 ```
 
-**Note:** These scripts install OpenSSL to `/usr/local/opt/openssl@3.2.0` and may require `sudo` permission.
+**Note:** These scripts install OpenSSL to `/usr/local/opt/openssl@3.6.4` and may require `sudo` permission.
 
 **Custom Install Location:**
 If you prefer a different installation path, you can set the `CBMPC_OPENSSL_ROOT` variable:
 
 ```bash
-# Option 1: Environment variable (before running cmake)
+# Option 1: Environment variable (before building OpenSSL)
+CBMPC_OPENSSL_ROOT=/your/custom/path make openssl
+
+# Option 2: Environment variable (before running cmake)
 export CBMPC_OPENSSL_ROOT=/your/custom/path
 
-# Option 2: CMake variable
+# Option 3: CMake variable
 cmake -DCBMPC_OPENSSL_ROOT=/your/custom/path ...
 ```
 
@@ -148,19 +234,43 @@ To test the library, run
 
 Running demos and benchmarks:
 
-- Go wrapper and Go demos do not require installation. They compile against the local build output under `<repo_root>/lib` via `scripts/go_with_cpp.sh`.
-  - Run Go tests: `make test-go` (or `make test-go-short`, `make test-go-race`)
-- C++ demos and benchmarks still expect the library to be installed under `/usr/local/opt/cbmpc`.
-  - Install for C++ usage: `sudo make install`
-  - Run all demos (C++ + Go): `make demos`
-  - Run benchmarks: `make bench`
+- By default, demos/benchmarks use a **repo-local install prefix** under `build/install/` (no `sudo`).
+  - Public install (only `include/`): `make install` (installs to `build/install/public`)
+  - Full install (also installs `include-internal/`): `make install-full` (installs to `build/install/full`)
+  - Run all demos (C++ + API + Go): `make demo` (or `make demos`)
+  - Run benchmarks: `make bench` (auto-runs the full install)
 
 Notes:
-- If you have not run `make install`, the C++ portion of `make demos` may fail, but the Go demos will still use the local build.
-- To run a single Go demo without install, for example `ecdsa-2pc`:
-  ```bash
-  BUILD_TYPE=Release bash scripts/go_with_cpp.sh --no-cd bash -lc "cd demos-go/examples/ecdsa-2pc && go run main.go"
-  ```
+- `make demo` takes care of building + installing the right variants (public vs full) before running each demo.
+
+### Install Public API vs full API
+
+By default the cb-mpc library only installs the public API. To install the full APIs run the following command:
+
+```bash
+scripts/install.sh --mode full
+```
+
+### Install prefix (optional)
+
+You can install to a custom prefix:
+
+```bash
+scripts/install.sh --mode public --prefix /path/to/prefix
+# or:
+CBMPC_PREFIX=/path/to/prefix scripts/install.sh --mode full
+```
+
+For the Makefile helpers, you can override the default repo-local layout:
+
+```bash
+# Install under a custom root (creates <root>/{public,full})
+make install-all CBMPC_INSTALL_ROOT=/path/to/prefix
+
+# Or override each prefix independently
+make install CBMPC_PREFIX_PUBLIC=/path/to/public/prefix
+make install-full CBMPC_PREFIX_FULL=/path/to/full/prefix
+```
 
 Our benchmark results can be found at <https://coinbase.github.io/cb-mpc>
 
@@ -193,7 +303,7 @@ For example, for a one-off testing, you can run
 `docker run -it --rm -v $(pwd):/code -t cb-mpc bash -c 'make test'`
 
 
-## Supported Protocols
+# Supported Protocols
 
 Please note that all cryptographic code has a specification (except for code like wrappers around OpenSSL and the like), but there are some protocol specifications that are not implemented but still appear in the specifications since they may be useful for some application developers.
 
@@ -297,8 +407,12 @@ Our implementation modifies OpenSSL's OAEP padding algorithm to support determin
 
 The security properties of OAEP remain intact as long as the provided seed maintains appropriate randomness and uniqueness requirements. For standard encryption operations, we recommend using the non-deterministic version that generates random seeds internally.
 
-## Bitcoin Secp256k1 Curve implementation
+## Bitcoin Secp256k1 Curve Implementation
 
 We used a modified version of the secp256k1 curve implementation from [coinbase/secp256k1](https://github.com/coinbase/secp256k1) which is forked from [bitcoin-core/secp256k1](https://github.com/bitcoin-core/secp256k1). The change made is to allow calling the curve operations from within our C++ codebase.
 
 Note that as indicated in their repository, the curve addition operations of `secp256k1` are not constant time. To work around this, we have devised a custom point addition operation that is constant time. Please refer to our [documentation](/docs/constant-time.pdf) for more details.
+
+# Go Wrappers
+
+There are extensive Go wrappers for this C++ library that enable the use of library natively from Go. You can find them in [coinbase/cb-mpc-go](https://github.com/coinbase/cb-mpc-go/). The repository also includes demos on how to use the library in Go. 

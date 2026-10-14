@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
-#include <cbmpc/core/strext.h>
-#include <cbmpc/crypto/secret_sharing.h>
-#include <cbmpc/protocol/ec_dkg.h>
+#include <cbmpc/internal/core/strext.h>
+#include <cbmpc/internal/crypto/secret_sharing.h>
+#include <cbmpc/internal/protocol/ec_dkg.h>
 
 #include "utils/local_network/mpc_tester.h"
 #include "utils/test_macros.h"
@@ -26,8 +26,9 @@ static void RunDkgAndAdditiveShareTest(crypto::ss::node_t* root_node, const std:
   ecurve_t curve = crypto::curve_secp256k1;
   const auto& G = curve.generator();
   ss::ac_t ac;
-  ac.G = G;
+  ac.curve = curve;
   ac.root = root_node;
+  ASSERT_TRUE(ac.enough_for_quorum(additive_quorum_names));
 
   mpc::party_set_t quorum_party_set;
   for (int idx : dkg_quorum_indices) quorum_party_set.add(idx);
@@ -36,8 +37,8 @@ static void RunDkgAndAdditiveShareTest(crypto::ss::node_t* root_node, const std:
   buf_t sid_dkg = crypto::gen_random(16);
   mpc_runner_t all_parties_runner(pnames);
   all_parties_runner.run_mpc([&](mpc::job_mp_t& job) {
-    ASSERT_OK(coinbase::mpc::eckey::key_share_mp_t::threshold_dkg(job, curve, sid_dkg, ac, quorum_party_set,
-                                                                  keyshares[job.get_party_idx()]));
+    ASSERT_OK(coinbase::mpc::eckey::key_share_mp_t::dkg_ac(job, curve, sid_dkg, ac, quorum_party_set,
+                                                           keyshares[job.get_party_idx()]));
   });
 
   // Basic key consistency
@@ -49,16 +50,36 @@ static void RunDkgAndAdditiveShareTest(crypto::ss::node_t* root_node, const std:
   // Test to_additive_share for each member in the additive quorum
   std::map<crypto::pname_t, int> index_map;
   for (int i = 0; i < pnames.size(); i++) index_map[pnames[i]] = i;
+  bn_t additive_x_sum = 0;
+  bool has_reference_Qis = false;
+  party_map_t<ecc_point_t> reference_Qis;
   for (const auto& name : additive_quorum_names) {
     coinbase::mpc::eckey::key_share_mp_t additive_share;
     ASSERT_OK(keyshares[index_map[name]].to_additive_share(ac, additive_quorum_names, additive_share));
     EXPECT_EQ(additive_share.Q, keyshares[0].Q);
+
     for (const auto& qn : additive_quorum_names) {
       ASSERT_TRUE(additive_share.Qis.count(qn));
       EXPECT_TRUE(additive_share.Qis[qn].valid());
     }
+
+    if (!has_reference_Qis) {
+      reference_Qis = additive_share.Qis;
+      has_reference_Qis = true;
+    } else {
+      EXPECT_EQ(additive_share.Qis, reference_Qis);
+    }
+
+    MODULO(curve.order()) additive_x_sum += additive_share.x_share;
     EXPECT_EQ(additive_share.x_share * G, additive_share.Qis[name]);
   }
+
+  ecc_point_t additive_Q_sum = curve.infinity();
+  for (const auto& entry : reference_Qis) {
+    additive_Q_sum += entry.second;
+  }
+  EXPECT_EQ(additive_Q_sum, keyshares[0].Q);
+  EXPECT_EQ(additive_x_sum * G, keyshares[0].Q);
 }
 
 TEST(ECDKG, ReconstructPubAdditiveShares) {
@@ -76,7 +97,7 @@ TEST(ECDKG, ReconstructPubAdditiveShares) {
   ecurve_t curve = crypto::curve_secp256k1;
   const auto& G = curve.generator();
   ss::ac_t ac;
-  ac.G = G;
+  ac.curve = curve;
   ac.root = root_node;
 
   std::set<crypto::pname_t> quorum = {"p0", "p1", "p2"};
@@ -129,7 +150,7 @@ TEST(ECDKG, ReconstructPubAdditiveShares) {
   EXPECT_EQ(additive_share.Qis["p2"], expected_p2);
 }
 
-TEST(ECDKG, ReconstructPubAdditiveShares_ORNode) {
+TEST(ECDKG, ReconstructPubShares_OR) {
   // OR(p0, AND(p1, THRESHOLD[1](p2, p3))) with additive quorum {p1, p2}
   ss::node_t* root_node = new ss::node_t(
       ss::node_e::OR, "", 0,
@@ -146,7 +167,86 @@ TEST(ECDKG, ReconstructPubAdditiveShares_ORNode) {
   RunDkgAndAdditiveShareTest(root_node, pnames, dkg_quorum_indices, additive_quorum);
 }
 
-TEST(ECDKG, ReconstructPubAdditiveShares_Threshold2of3) {
+TEST(ECDKG, ReconstructAdditiveShares_ORSkipsUnsatisfiedAND) {
+  // OR(AND(p0, p1), p2) with additive quorum {p0, p2}. The root quorum is
+  // satisfied by p2, so reconstruction must not select the unsatisfied AND.
+  ss::node_t* root_node =
+      new ss::node_t(ss::node_e::OR, "", 0,
+                     {new ss::node_t(ss::node_e::AND, "and-group", 0,
+                                     {new ss::node_t(ss::node_e::LEAF, "p0"), new ss::node_t(ss::node_e::LEAF, "p1")}),
+                      new ss::node_t(ss::node_e::LEAF, "p2")});
+
+  std::vector<crypto::pname_t> pnames = {"p0", "p1", "p2"};
+  std::set<int> dkg_quorum_indices = {0, 2};
+  std::set<crypto::pname_t> additive_quorum = {"p0", "p2"};
+  RunDkgAndAdditiveShareTest(root_node, pnames, dkg_quorum_indices, additive_quorum);
+}
+
+TEST(ECDKG, ReconstructAdditiveShares_ORWithRedundantSatisfiedLeaves) {
+  // OR(p0, p1, p2) with all leaves supplied. The first satisfied leaf is enough,
+  // and the redundant leaves should receive zero additive contribution.
+  ss::node_t* root_node =
+      new ss::node_t(ss::node_e::OR, "", 0,
+                     {new ss::node_t(ss::node_e::LEAF, "p0"), new ss::node_t(ss::node_e::LEAF, "p1"),
+                      new ss::node_t(ss::node_e::LEAF, "p2")});
+
+  std::vector<crypto::pname_t> pnames = {"p0", "p1", "p2"};
+  std::set<int> dkg_quorum_indices = {0, 1, 2};
+  std::set<crypto::pname_t> additive_quorum = {"p0", "p1", "p2"};
+  RunDkgAndAdditiveShareTest(root_node, pnames, dkg_quorum_indices, additive_quorum);
+}
+
+TEST(ECDKG, ReconstructAdditiveShares_ANDWithRedundantThresholdChild) {
+  // AND(THRESHOLD[1](p0, p1, p2), p3) with all leaves supplied. The threshold
+  // child has redundant leaves, but the AND node should still reconstruct.
+  ss::node_t* root_node =
+      new ss::node_t(ss::node_e::AND, "", 0,
+                     {new ss::node_t(ss::node_e::THRESHOLD, "inner-th", 1,
+                                     {new ss::node_t(ss::node_e::LEAF, "p0"), new ss::node_t(ss::node_e::LEAF, "p1"),
+                                      new ss::node_t(ss::node_e::LEAF, "p2")}),
+                      new ss::node_t(ss::node_e::LEAF, "p3")});
+
+  std::vector<crypto::pname_t> pnames = {"p0", "p1", "p2", "p3"};
+  std::set<int> dkg_quorum_indices = {0, 1, 2, 3};
+  std::set<crypto::pname_t> additive_quorum = {"p0", "p1", "p2", "p3"};
+  RunDkgAndAdditiveShareTest(root_node, pnames, dkg_quorum_indices, additive_quorum);
+}
+
+TEST(ECDKG, ReconstructAdditiveShares_ThresholdWithRedundantCompositeChildren) {
+  // THRESHOLD[2](OR(p0, p1), AND(p2, p3), p4) with all leaves supplied. The
+  // threshold node should select a consistent pair of satisfied children.
+  ss::node_t* root_node =
+      new ss::node_t(ss::node_e::THRESHOLD, "", 2,
+                     {new ss::node_t(ss::node_e::OR, "or-group", 0,
+                                     {new ss::node_t(ss::node_e::LEAF, "p0"), new ss::node_t(ss::node_e::LEAF, "p1")}),
+                      new ss::node_t(ss::node_e::AND, "and-group", 0,
+                                     {new ss::node_t(ss::node_e::LEAF, "p2"), new ss::node_t(ss::node_e::LEAF, "p3")}),
+                      new ss::node_t(ss::node_e::LEAF, "p4")});
+
+  std::vector<crypto::pname_t> pnames = {"p0", "p1", "p2", "p3", "p4"};
+  std::set<int> dkg_quorum_indices = {0, 1, 2, 3, 4};
+  std::set<crypto::pname_t> additive_quorum = {"p0", "p1", "p2", "p3", "p4"};
+  RunDkgAndAdditiveShareTest(root_node, pnames, dkg_quorum_indices, additive_quorum);
+}
+
+TEST(ECDKG, ReconstructAdditiveShares_ThresholdSkipsUnsatisfiedRedundantChild) {
+  // THRESHOLD[2](AND(p0, p1), OR(p2, p3), p4) with p1 absent. The unsatisfied
+  // AND child is redundant because OR(p2, p3) and p4 satisfy the threshold.
+  ss::node_t* root_node =
+      new ss::node_t(ss::node_e::THRESHOLD, "", 2,
+                     {new ss::node_t(ss::node_e::AND, "and-group", 0,
+                                     {new ss::node_t(ss::node_e::LEAF, "p0"), new ss::node_t(ss::node_e::LEAF, "p1")}),
+                      new ss::node_t(ss::node_e::OR, "or-group", 0,
+                                     {new ss::node_t(ss::node_e::LEAF, "p2"), new ss::node_t(ss::node_e::LEAF, "p3")}),
+                      new ss::node_t(ss::node_e::LEAF, "p4")});
+
+  std::vector<crypto::pname_t> pnames = {"p0", "p1", "p2", "p3", "p4"};
+  std::set<int> dkg_quorum_indices = {0, 1, 2, 3, 4};
+  std::set<crypto::pname_t> additive_quorum = {"p0", "p2", "p3", "p4"};
+  RunDkgAndAdditiveShareTest(root_node, pnames, dkg_quorum_indices, additive_quorum);
+}
+
+TEST(ECDKG, ReconstructPubShares_Thres2of3) {
   // THRESHOLD[2](p0, p1, p2) with additive quorum {p0, p2}
   ss::node_t* root_node =
       new ss::node_t(ss::node_e::THRESHOLD, "", 2,
@@ -159,7 +259,33 @@ TEST(ECDKG, ReconstructPubAdditiveShares_Threshold2of3) {
   RunDkgAndAdditiveShareTest(root_node, pnames, dkg_quorum_indices, additive_quorum);
 }
 
-TEST(ECDKG, ReconstructPubAdditiveShares_ThresholdNofN_ANDEquivalent) {
+TEST(ECDKG, ReconstructPub_2of3_AllQuorum) {
+  // THRESHOLD[2](p0, p1, p2) with all leaves in additive quorum (|quorum| > threshold).
+  ss::node_t* root_node =
+      new ss::node_t(ss::node_e::THRESHOLD, "", 2,
+                     {new ss::node_t(ss::node_e::LEAF, "p0"), new ss::node_t(ss::node_e::LEAF, "p1"),
+                      new ss::node_t(ss::node_e::LEAF, "p2")});
+
+  std::vector<crypto::pname_t> pnames = {"p0", "p1", "p2"};
+  std::set<int> dkg_quorum_indices = {0, 1, 2};
+  std::set<crypto::pname_t> additive_quorum = {"p0", "p1", "p2"};
+  RunDkgAndAdditiveShareTest(root_node, pnames, dkg_quorum_indices, additive_quorum);
+}
+
+TEST(ECDKG, ReconstructPub_1of3_AllQuorum) {
+  // THRESHOLD[1](p0, p1, p2) with all leaves in additive quorum.
+  ss::node_t* root_node =
+      new ss::node_t(ss::node_e::THRESHOLD, "", 1,
+                     {new ss::node_t(ss::node_e::LEAF, "p0"), new ss::node_t(ss::node_e::LEAF, "p1"),
+                      new ss::node_t(ss::node_e::LEAF, "p2")});
+
+  std::vector<crypto::pname_t> pnames = {"p0", "p1", "p2"};
+  std::set<int> dkg_quorum_indices = {0, 1, 2};
+  std::set<crypto::pname_t> additive_quorum = {"p0", "p1", "p2"};
+  RunDkgAndAdditiveShareTest(root_node, pnames, dkg_quorum_indices, additive_quorum);
+}
+
+TEST(ECDKG, ReconstructPub_NofN_AndEq) {
   // THRESHOLD[3](p0, p1, p2) with additive quorum {p0, p1, p2} (equivalent to AND)
   ss::node_t* root_node =
       new ss::node_t(ss::node_e::THRESHOLD, "", 3,
@@ -172,8 +298,8 @@ TEST(ECDKG, ReconstructPubAdditiveShares_ThresholdNofN_ANDEquivalent) {
   RunDkgAndAdditiveShareTest(root_node, pnames, dkg_quorum_indices, additive_quorum);
 }
 
-TEST(ECDKG, ReconstructPubAdditiveShares_Threshold3of4_LargerLeaves) {
-  // THRESHOLD[3](p0, p1, p2, p3) with additive quorum {p0, p1, p2}
+TEST(ECDKG, ReconstructPub_3of4_LargeLeaves) {
+  // THRESHOLD[3](p0, p1, p2, p3) with additive quorum {p1, p2, p3}
   ss::node_t* root_node =
       new ss::node_t(ss::node_e::THRESHOLD, "", 3,
                      {new ss::node_t(ss::node_e::LEAF, "p0"), new ss::node_t(ss::node_e::LEAF, "p1"),
@@ -185,7 +311,7 @@ TEST(ECDKG, ReconstructPubAdditiveShares_Threshold3of4_LargerLeaves) {
   RunDkgAndAdditiveShareTest(root_node, pnames, dkg_quorum_indices, additive_quorum);
 }
 
-TEST(ECDKG, ThresholdDkgRejectsInvalidAccessStructureDuplicateLeaves) {
+TEST(ECDKG, ThresholdDkgRejectsDupLeaves) {
   dylog_disable_scope_t dylog_disable_scope;
 
   ecurve_t curve = crypto::curve_secp256k1;
@@ -197,7 +323,7 @@ TEST(ECDKG, ThresholdDkgRejectsInvalidAccessStructureDuplicateLeaves) {
               {new node_t(node_e::LEAF, "p1"), new node_t(node_e::LEAF, "p1"), new node_t(node_e::LEAF, "p2")});
 
   ss::ac_t ac;
-  ac.G = G;
+  ac.curve = curve;
   ac.root = &root;
 
   std::vector<crypto::pname_t> pnames = {"p0", "p1", "p2"};
@@ -208,7 +334,7 @@ TEST(ECDKG, ThresholdDkgRejectsInvalidAccessStructureDuplicateLeaves) {
 
   buf_t sid = crypto::gen_random(16);
   key_share_mp_t key;
-  error_t rv = key_share_mp_t::threshold_dkg(job, curve, sid, ac, quorum_party_set, key);
+  error_t rv = key_share_mp_t::dkg_ac(job, curve, sid, ac, quorum_party_set, key);
   EXPECT_EQ(uint32_t(rv), uint32_t(E_BADARG));
 }
 

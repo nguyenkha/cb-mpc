@@ -1,5 +1,5 @@
-#include <cbmpc/core/utils.h>
-#include <cbmpc/crypto/base.h>
+#include <cbmpc/internal/core/utils.h>
+#include <cbmpc/internal/crypto/base.h>
 
 namespace coinbase::crypto {
 
@@ -37,6 +37,10 @@ static const mod_t& order() {
       mod_t(bn_t::from_string("7237005577332262213973186563042994240857116359379907606001950938285454250989"),
             /* multiplicative_dense */ true);
   return order_value;
+}
+
+static void assert_scalar_in_order_range(const bn_t& x) {
+  cb_assert(order().is_in_range(x) && "Ed25519 point scalar must be in [0, order)");
 }
 
 // see https://www.rfc-editor.org/rfc/rfc8032#section-3.2
@@ -113,7 +117,6 @@ bool ecurve_ed_t::cnd_copy_point(bool flag, const ecc_point_t& Src, ecc_point_t&
 bool ecurve_ed_t::is_on_curve(const ecc_point_t& P) const { return ec25519_core::is_on_curve(P.storage); }
 
 bool ecurve_ed_t::is_in_subgroup(const ecc_point_t& P) const {
-  // NOTE: There is a more efficient way to check: https://eprint.iacr.org/2022/1164.pdf
   if (!is_on_curve(P)) return false;
   return ec25519_core::is_in_subgroup(P.storage);
 }
@@ -129,16 +132,23 @@ bool ecurve_ed_t::equ_points(const ecc_point_t& P1, const ecc_point_t& P2) const
 }
 
 void ecurve_ed_t::add(const ecc_point_t& P1, const ecc_point_t& P2, ecc_point_t& R) const {
-  ec25519_core::add(R.storage, P1.storage, P2.storage);
+  if (P1.storage == P2.storage)
+    ec25519_core::dbl(R.storage, P1.storage);
+  else
+    ec25519_core::add(R.storage, P1.storage, P2.storage);
 }
 
 void ecurve_ed_t::add_consttime(const ecc_point_t& P1, const ecc_point_t& P2, ecc_point_t& R) const {
   ec25519_core::add(R.storage, P1.storage, P2.storage);
 }
 
-void ecurve_ed_t::mul_vartime(const ecc_point_t& P, const bn_t& x, ecc_point_t& R) const { mul(P, x, R); }
+void ecurve_ed_t::mul_vartime(const ecc_point_t& P, const bn_t& x, ecc_point_t& R) const {
+  ed25519::assert_scalar_in_order_range(x);
+  ec25519_core::mul_vartime(R.storage, P.storage, x);
+}
 
 void ecurve_ed_t::mul(const ecc_point_t& P, const bn_t& x, ecc_point_t& R) const {
+  ed25519::assert_scalar_in_order_range(x);
   ec25519_core::mul(R.storage, P.storage, x);
 }
 
@@ -155,7 +165,10 @@ bool ecurve_ed_t::hash_to_point(mem_t bin, ecc_point_t& P) const {
   if (bin.size != ed25519::pub_compressed_bin_size()) return false;
   if (0 != from_bin(P, bin)) return false;
 
-  P *= 8;  // clear co-factor
+  // Clear co-factor using repeated doubling instead of generic scalar multiplication.
+  P += P;
+  P += P;
+  P += P;
   return true;
 }
 
@@ -179,7 +192,7 @@ buf_t ecurve_ed_t::prv_to_der(const ecc_prv_key_t& K) const {
   cb_assert(K.ed_bin.size() == ed25519::prv_bin_size());
   buf_t out(ed25519::pkcs8_prefix.size + ed25519::prv_bin_size());
   memmove(out.data(), ed25519::pkcs8_prefix.data, ed25519::pkcs8_prefix.size);
-  memmove(out.data() + ed25519::x509_prefix.size, K.ed_bin.data(), ed25519::prv_bin_size());
+  memmove(out.data() + ed25519::pkcs8_prefix.size, K.ed_bin.data(), ed25519::prv_bin_size());
   return out;
 }
 
@@ -205,16 +218,12 @@ error_t ecurve_ed_t::verify(const ecc_pub_key_t& P, mem_t hash, mem_t sig) const
 }
 
 buf_t ecurve_ed_t::sign(const ecc_prv_key_t& K, mem_t hash) const {
+  cb_assert(K.ed_bin.size() == ed25519::prv_bin_size() && "Ed25519 signing requires a 32-byte private seed");
   buf_t sig(ed25519::signature_size());
   ecc_point_t P = K.pub();
   buf_t pub_bin = P.to_compressed_bin();
 
-  if (K.ed_bin.empty()) {
-    buf_t scalar = K.value().to_bin(ed25519::prv_bin_size());
-    ED25519_sign_with_scalar(sig.data(), hash.data, hash.size, pub_bin.data(), scalar.data());
-  } else {
-    ED25519_sign(sig.data(), hash.data, hash.size, pub_bin.data(), K.ed_bin.data());
-  }
+  ED25519_sign(sig.data(), hash.data, hash.size, pub_bin.data(), K.ed_bin.data());
   return sig;
 }
 

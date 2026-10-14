@@ -1,6 +1,5 @@
-#include "tdh2.h"
-
-#include <cbmpc/crypto/secret_sharing.h>
+#include <cbmpc/internal/crypto/secret_sharing.h>
+#include <cbmpc/internal/crypto/tdh2.h>
 
 namespace coinbase::crypto::tdh2 {
 
@@ -9,11 +8,10 @@ constexpr int tag_size = 16;
 
 ciphertext_t public_key_t::encrypt(mem_t plain, mem_t label) const {
   const auto& curve = Q.get_curve();
-  const mod_t& q = curve.order();
 
   buf_t iv = gen_random(iv_size);
-  bn_t r = bn_t::rand(q);
-  bn_t s = bn_t::rand(q);
+  bn_t r = curve.get_random_value();
+  bn_t s = curve.get_random_value();
   return encrypt(plain, label, r, s, iv);
 }
 
@@ -51,10 +49,12 @@ error_t ciphertext_t::verify(const public_key_t& pub_key, mem_t label) const {
   const mod_t& q = curve.order();
 
   if (label != L) return coinbase::error(E_CRYPTO, "ciphertext_t::verify: label mismatch");
+  if (iv.size() != iv_size) return coinbase::error(E_CRYPTO, "ciphertext_t::verify: invalid iv");
+  if (!q.is_in_range(e) || !q.is_in_range(f)) return coinbase::error(E_CRYPTO, "ciphertext_t::verify: invalid scalar");
   if (rv = curve.check(R1)) return coinbase::error(rv, "ciphertext_t::verify: check R1 failed");
   if (rv = curve.check(R2)) return coinbase::error(rv, "ciphertext_t::verify: check R2 failed");
 
-  if (Gamma != ro::hash_curve(mem_t("TDH2-Gamma"), Q).curve(Q.get_curve()))
+  if (Gamma != ro::hash_curve(mem_t("TDH2-Gamma"), Q, pub_key.sid).curve(Q.get_curve()))
     return coinbase::error(E_CRYPTO, "ciphertext_t::verify: Gamma mismatch");
 
   ecc_point_t W1 = f * G - e * R1;
@@ -79,7 +79,7 @@ error_t private_share_t::decrypt(const ciphertext_t& ciphertext, mem_t label,
   bn_t& ei = partial_decryption.ei;
   bn_t& fi = partial_decryption.fi;
 
-  partial_decryption.pid = pid;
+  partial_decryption.rid = rid;
   Xi = x * R1;
 
   bn_t si = curve.get_random_value();
@@ -112,6 +112,7 @@ error_t partial_decryption_t::check_partial_decryption_helper(const ecc_point_t&
 
   const auto& G = curve.generator();
   const mod_t& q = curve.order();
+  if (!q.is_in_range(ei) || !q.is_in_range(fi)) return coinbase::error(E_CRYPTO);
 
   const ecc_point_t& R1 = ciphertext.R1;
   ecc_point_t Yi = fi * R1 - ei * Xi;
@@ -129,20 +130,26 @@ error_t combine_additive(const public_key_t& pub_key, const pub_shares_t& Qi, me
   error_t rv = UNINITIALIZED_ERROR;
   const auto& curve = pub_key.Q.get_curve();
   int n = int(Qi.size());
+  ecc_point_t reconstructed_Q = curve.infinity();
   for (const auto& _Qi : Qi) {
     if (rv = curve.check(_Qi)) return coinbase::error(rv, "combine_additive: check Qi failed");
+    reconstructed_Q += _Qi;
   }
+  if (reconstructed_Q != pub_key.Q) return coinbase::error(E_CRYPTO, "combine_additive: public shares mismatch");
   if ((int)partial_decryptions.size() != n) return coinbase::error(E_CRYPTO);
 
   if (rv = ciphertext.verify(pub_key, label)) return rv;
 
   ecc_point_t V = curve.infinity();
+  std::vector<bool> seen_rids(n, false);
   for (int i = 0; i < n; i++) {
     const partial_decryption_t& partial_decryption = partial_decryptions[i];
 
-    int pid = partial_decryption.pid;
-    if (pid < 1 || pid > n) return coinbase::error(E_CRYPTO);
-    if (rv = partial_decryption.check_partial_decryption_helper(Qi[pid - 1], ciphertext, curve)) return rv;
+    const int rid = partial_decryption.rid;
+    if (rid < 1 || rid > n) return coinbase::error(E_CRYPTO);
+    if (seen_rids[rid - 1]) return coinbase::error(E_CRYPTO, "combine_additive: duplicate rid");
+    seen_rids[rid - 1] = true;
+    if (rv = partial_decryption.check_partial_decryption_helper(Qi[rid - 1], ciphertext, curve)) return rv;
 
     V += partial_decryption.Xi;
   }
@@ -160,9 +167,21 @@ error_t combine(const ss::ac_t& ac, const public_key_t& pub_key, ss::ac_pub_shar
 
   if (rv = ciphertext.verify(pub_key, label)) return rv;
 
+  ss::ac_pub_shares_t selected_pub_shares;
+  for (const auto& [name, partial_decryption] : partial_decryptions) {
+    const auto it = pub_shares.find(name);
+    if (it == pub_shares.end()) return coinbase::error(E_CRYPTO, "combine: missing public share");
+    selected_pub_shares[name] = it->second;
+  }
+
+  ecc_point_t reconstructed_Q;
+  if (rv = ac.reconstruct_exponent(selected_pub_shares, reconstructed_Q)) return rv;
+  if (reconstructed_Q != pub_key.Q) return coinbase::error(E_CRYPTO, "combine: public shares mismatch");
+
   ss::ac_pub_shares_t Vs;
   for (const auto& [name, partial_decryption] : partial_decryptions) {
-    if (rv = partial_decryption.check_partial_decryption_helper(pub_shares[name], ciphertext, pub_key.Q.get_curve()))
+    if (rv = partial_decryption.check_partial_decryption_helper(selected_pub_shares.at(name), ciphertext,
+                                                                pub_key.Q.get_curve()))
       return rv;
     if (rv = pub_key.Q.get_curve().check(partial_decryption.Xi)) return rv;
 

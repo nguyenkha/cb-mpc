@@ -1,6 +1,5 @@
-#include "ot.h"
-
-#include <cbmpc/crypto/ro.h>
+#include <cbmpc/internal/crypto/ro.h>
+#include <cbmpc/internal/protocol/ot.h>
 
 namespace coinbase::mpc {
 
@@ -45,6 +44,11 @@ error_t base_ot_protocol_pvw_ctx_t::step2_S2R(const std::vector<buf_t>& x0, cons
   this->x0 = x0;
   this->x1 = x1;
 
+  for (int i = 0; i < m; i++) {
+    if (coinbase::bytes_to_bits(x0[i].size()) != l || coinbase::bytes_to_bits(x1[i].size()) != l)
+      return coinbase::error(E_BADARG, "base_ot_protocol_pvw_ctx_t::step2_S2R: x0/x1 size mismatch");
+  }
+
   const mod_t& q = curve.order();
   ecc_point_t G0, G1, H0, H1;
   G0 = curve.generator();
@@ -87,6 +91,8 @@ error_t base_ot_protocol_pvw_ctx_t::output_R(std::vector<buf_t>& x) {
   x.resize(m);
 
   for (int i = 0; i < m; i++) {
+    if (coinbase::bytes_to_bits(V0[i].size()) != l || coinbase::bytes_to_bits(V1[i].size()) != l)
+      return coinbase::error(E_FORMAT, "base_ot_protocol_pvw_ctx_t::output_R: V0/V1 size mismatch");
     if (rv = curve.check(U0[i])) return coinbase::error(rv, "base_ot_protocol_pvw_ctx_t::output_R: check U0[i] failed");
     if (rv = curve.check(U1[i])) return coinbase::error(rv, "base_ot_protocol_pvw_ctx_t::output_R: check U1[i] failed");
     // Optimization: if the curve backend supports constant-time point cmov, select U_b and V_b and do
@@ -162,7 +168,8 @@ static void matrix_transposition(uint8_t const* inp, uint8_t* out, int nrows, in
   for (int rr = 0; rr < nrows; rr += 16) {
     for (int cc = 0; cc < ncols; cc += 8) {
       for (int i = 0; i < 16; ++i) tmp.b[i] = INP_BYTE(rr + i, cc);
-      for (int i = 8; --i >= 0; tmp = lshift64x2(tmp)) *(uint16_t*)&OUT_BYTE(rr, cc + i) = high16x8(tmp);
+      for (int i = 8; --i >= 0; tmp = lshift64x2(tmp))
+        coinbase::le_set_2(byte_ptr(&OUT_BYTE(rr, cc + i)), high16x8(tmp));
     }
   }
 }

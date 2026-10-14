@@ -1,14 +1,10 @@
-#include <cbmpc/core/extended_uint.h>
-#include <cbmpc/core/utils.h>
-#include <cbmpc/crypto/base.h>
+#include <cbmpc/internal/core/utils.h>
+#include <cbmpc/internal/crypto/base.h>
+#include <cbmpc/internal/crypto/base_bn256.h>
 
 namespace coinbase::crypto {
 
-#if (defined(TARGET_IPHONE_SIMULATOR) && TARGET_IPHONE_SIMULATOR) || defined(__EMSCRIPTEN__)
-static thread_local int vartime_scope = 1;
-#else
 static thread_local int vartime_scope = 0;
-#endif
 
 vartime_scope_t::vartime_scope_t() { vartime_scope++; }
 vartime_scope_t::~vartime_scope_t() { vartime_scope--; }
@@ -20,15 +16,13 @@ mod_t::~mod_t() {
   if (mont) BN_MONT_CTX_free(mont);
 }
 
+bool mod_t::is_valid_modulus(const bn_t& m) { return m > 1 && m.get_bits_count() <= MAX_MODULUS_BITS && m.is_odd(); }
+
 void mod_t::convert(coinbase::converter_t& converter) {
   converter.convert(m);
   if (!converter.is_write()) {
     if (converter.is_error()) return;
-    if (m <= 1) {
-      converter.set_error();
-      return;
-    }
-    if (!m.is_odd()) {
+    if (!is_valid_modulus(m)) {
       converter.set_error();
       return;
     }
@@ -36,8 +30,7 @@ void mod_t::convert(coinbase::converter_t& converter) {
   }
 }
 
-mod_t::mod_t(const mod_t& src)
-    : m(src.m), mu(src.mu), b_pow_k_plus1(src.b_pow_k_plus1), multiplicative_dense(src.multiplicative_dense) {
+mod_t::mod_t(const mod_t& src) : m(src.m), mu(src.mu), multiplicative_dense(src.multiplicative_dense) {
   if (src.mont) {
     mont = BN_MONT_CTX_new();
     if (!mont) throw std::bad_alloc();
@@ -48,26 +41,24 @@ mod_t::mod_t(const mod_t& src)
 }
 
 mod_t::mod_t(mod_t&& src)
-    : m(std::move(src.m)),
-      mu(std::move(src.mu)),
-      b_pow_k_plus1(std::move(src.b_pow_k_plus1)),
-      mont(src.mont),
-      multiplicative_dense(src.multiplicative_dense) {
+    : m(std::move(src.m)), mu(std::move(src.mu)), mont(src.mont), multiplicative_dense(src.multiplicative_dense) {
   src.mont = nullptr;
 }
 
 mod_t& mod_t::operator=(const mod_t& src) {
   if (&src != this) {
-    if (!mont) mont = BN_MONT_CTX_new();
-    if (!mont) throw std::bad_alloc();
-
     if (src.mont) {
+      if (!mont) mont = BN_MONT_CTX_new();
+      if (!mont) throw std::bad_alloc();
+
       auto res = BN_MONT_CTX_copy(mont, src.mont);
       cb_assert(res);
+    } else if (mont) {
+      BN_MONT_CTX_free(mont);
+      mont = nullptr;
     }
     m = src.m;
     mu = src.mu;
-    b_pow_k_plus1 = src.b_pow_k_plus1;
     multiplicative_dense = src.multiplicative_dense;
   }
   return *this;
@@ -80,13 +71,12 @@ mod_t& mod_t::operator=(mod_t&& src) {
     src.mont = nullptr;
     m = std::move(src.m);
     mu = std::move(src.mu);
-    b_pow_k_plus1 = std::move(src.b_pow_k_plus1);
     multiplicative_dense = src.multiplicative_dense;
   }
   return *this;
 }
 
-void mod_t::check(const bn_t& a) const { assert(is_in_range(a) && "out of range for constant-time operations"); }
+void mod_t::check(const bn_t& a) const { cb_assert(is_in_range(a) && "out of range for constant-time operations"); }
 
 bool mod_t::is_in_range(const bn_t& a) const { return a.sign() >= 0 && a < m; }
 
@@ -153,6 +143,9 @@ static void bn_copy(BIGNUM r, BIGNUM a) {
   if (r.top > len) std::fill(r.d + len, r.d + r.top, 0);
 }
 
+enum { BN_ULONG_BITS = sizeof(BN_ULONG) * 8 };
+static constexpr int MAX_MODULUS_WORDS = (mod_t::MAX_MODULUS_BITS + BN_ULONG_BITS - 1) / BN_ULONG_BITS;
+
 void mod_t::_mul(bn_t& r, const bn_t& a, const bn_t& b) const {
   if (vartime_scope) {
     int res = BN_mod_mul(r, a, b, m, bn_t::thread_local_storage_bn_ctx());
@@ -165,6 +158,14 @@ void mod_t::_mul(bn_t& r, const bn_t& a, const bn_t& b) const {
 
   const BIGNUM& aa = *(const BIGNUM*)a;
   const BIGNUM& bb = *(const BIGNUM*)b;
+  if (aa.top == 0 || bb.top == 0) {
+    r = 0;
+    return;
+  }
+
+  cb_assert(aa.top >= 0 && bb.top >= 0 && aa.top + bb.top <= 2 * MAX_MODULUS_WORDS);
+  // Intentional bounded VLA: modulus size is capped by MAX_MODULUS_BITS.
+  // Keep this on the stack to avoid heap allocation in the modular multiplication hot path.
   BN_ULONG buf[aa.top + bb.top];
   bn_mul_normal(buf, aa.d, aa.top, bb.d, bb.top);
 
@@ -174,7 +175,23 @@ void mod_t::_mul(bn_t& r, const bn_t& a, const bn_t& b) const {
 
 bn_t mod_t::div(const bn_t& a, const bn_t& b) const { return mul(a, inv(b)); }
 
-enum { BN_ULONG_BITS = sizeof(BN_ULONG) * 8 };
+bn_t mod_t::mod(int a) const {
+  bn_t abs_a;
+  const bool is_negative = a < 0;
+  if (is_negative) {
+    // Avoid `-INT_MIN` signed overflow / UB when `a == INT_MIN`.
+    const BN_ULONG word = static_cast<BN_ULONG>(-static_cast<unsigned int>(a));
+    int res = BN_set_word(abs_a, word);
+    cb_assert(res);
+  } else {
+    abs_a = a;
+  }
+
+  bn_t reduced_abs = abs_a;
+  if (reduced_abs >= m) reduced_abs = mod(reduced_abs);
+  if (is_negative && reduced_abs != 0) return neg(reduced_abs);
+  return reduced_abs;
+}
 
 static BN_ULONG div_words_by_two(int n, BN_ULONG* r) {
   uint64_t carry = 0;
@@ -221,22 +238,28 @@ static BN_ULONG ct_bn_sub_words(BN_ULONG* r, const BN_ULONG* a, const BN_ULONG* 
 }
 
 static BN_ULONG cnd_add_words(int n, BN_ULONG r[], bool flag, const BN_ULONG a[]) {
+  cb_assert(n > 0 && n <= MAX_MODULUS_WORDS);
   BN_ULONG mask = constant_time_mask_ulong(flag);
+  // Intentional bounded VLA: preserving the temp array keeps ct_bn_add_words()'s carry chain optimizable.
   BN_ULONG temp[n];
   for (int i = 0; i < n; i++) temp[i] = a[i] & mask;
   return ct_bn_add_words(r, r, temp, n);
 }
 
 static BN_ULONG cnd_sub_words(int n, BN_ULONG r[], bool flag, const BN_ULONG a[]) {
+  cb_assert(n > 0 && n <= MAX_MODULUS_WORDS);
   BN_ULONG mask = constant_time_mask_ulong(flag);
+  // Intentional bounded VLA: preserving the temp array keeps ct_bn_sub_words()'s borrow chain optimizable.
   BN_ULONG temp[n];
   for (int i = 0; i < n; i++) temp[i] = a[i] & mask;
   return ct_bn_sub_words(r, r, temp, n);
 }
 
 static BN_ULONG cnd_neg_words(int n, BN_ULONG r[], bool flag) {
+  cb_assert(n > 0 && n <= MAX_MODULUS_WORDS);
   BN_ULONG mask = constant_time_mask_ulong(flag);
   for (int i = 0; i < n; i++) r[i] ^= mask;
+  // Intentional bounded VLA: see cnd_add_words().
   BN_ULONG temp[n];
   std::fill(temp, temp + n, 0);
   temp[0] = (BN_ULONG)flag;
@@ -258,6 +281,8 @@ void mod_t::scr_inv(bn_t& res, const bn_t& in) const {
   r->top = n;
 
   const BN_ULONG* m = q->d;
+  cb_assert(n > 0 && n <= MAX_MODULUS_WORDS);
+  // Intentional bounded VLAs: n is capped by MAX_MODULUS_BITS. These buffers are hot scratch state for SCR inversion.
   BN_ULONG a[n];
   auto top = std::min(x->top, n);
   std::copy(x->d, x->d + top, a);
@@ -293,12 +318,27 @@ void mod_t::scr_inv(bn_t& res, const bn_t& in) const {
 void mod_t::random_masking_inv(bn_t& r, const bn_t& a) const {
   // Eventhough, this function is not truely constant-time, the running time is not dependent on the input (bn_t a).
   // Therefore, it doesn't leak any information of the input.
-  bn_t mask = rand();
-  bn_t masked_a = mul(a, mask);
-  masked_a.correct_top();
-  auto res = BN_mod_inverse(r, masked_a, m, bn_t::thread_local_storage_bn_ctx());
-  cb_assert(res && "mod_t::random_masking_inv failed");
-  r = mul(r, mask);
+  // `BN_mod_inverse` fails when the operand is not invertible modulo `m`.
+  // Even when `a` is invertible, a random mask might not be (e.g. if `m` is composite),
+  // which would make `a*mask` non-invertible. Retry with a fresh mask.
+  //
+  // Bound retries to avoid hanging forever when `a` itself isn't invertible.
+  constexpr int max_attempts = 128;
+  bn_t mask;
+  bn_t masked_a;
+  for (int attempt = 0; attempt < max_attempts; attempt++) {
+    mask = rand();
+    if (mask == 0) continue;
+
+    masked_a = mul(a, mask);
+    masked_a.correct_top();
+    if (BN_mod_inverse(r, masked_a, m, bn_t::thread_local_storage_bn_ctx())) {
+      r = mul(r, mask);
+      return;
+    }
+  }
+
+  cb_assert(false && "mod_t::random_masking_inv failed");
 }
 
 void mod_t::_inv(bn_t& r, const bn_t& a, inv_algo_e alg) const {
@@ -360,6 +400,8 @@ bn_t mod_t::mul_mont(const bn_t& x, const bn_t& y) const {
 }
 
 void mod_t::init(const bn_t& m) {
+  cb_assert(m.get_bits_count() <= MAX_MODULUS_BITS && "modulus too large");
+
   if (!mont) mont = BN_MONT_CTX_new();
   if (!mont) throw std::bad_alloc();
 
@@ -369,9 +411,8 @@ void mod_t::init(const bn_t& m) {
 
   // barrett
   int k = (m.get_bits_count() + 63) / 64;
-  bn_t b_pow_2k = bn_t(1).mul_2_pow(2 * k * 64);    // b^{2k}
-  mu = b_pow_2k / m;                                // µ = ⌊b^{2k} / m⌋
-  b_pow_k_plus1 = bn_t(1).mul_2_pow((k + 1) * 64);  // b^{k+1}
+  bn_t b_pow_2k = bn_t(1).mul_2_pow(2 * k * 64);  // b^{2k}
+  mu = b_pow_2k / m;                              // µ = ⌊b^{2k} / m⌋
 }
 
 static void barrett_partial_mul(int ResultLength, BN_ULONG r[], int M, const BN_ULONG u[], int N, const BN_ULONG v[]) {
@@ -431,12 +472,16 @@ void mod_t::_mod(BIGNUM& r, const BIGNUM& x) const {
   BIGNUM q1 = bn_skip(x, k - 1);  // q1 = x / b^(k-1)
 
   int q2_len = q1.top + mu.top;
+  cb_assert(k <= MAX_MODULUS_WORDS);
+  cb_assert(q2_len <= 2 * MAX_MODULUS_WORDS + 2);
+  // Intentional bounded VLA: q2_len is derived from operands capped by MAX_MODULUS_BITS.
   BN_ULONG q2_buf[q2_len];
   BIGNUM q2 = bn_buf(q2_buf, q2_len);
   bn_mul_normal(q2.d, q1.d, q1.top, mu.d, mu.top);  // q2 = q1 * mu;
 
   BIGNUM q3 = bn_skip(q2, k + 1);  // q3 = q2 / b^(k+1)
 
+  // Intentional bounded VLA: k <= MAX_MODULUS_WORDS.
   BN_ULONG r2_buf[k + 1];
   BIGNUM r2 = bn_buf(r2_buf, k + 1);
   barrett_partial_mul(r2.top, r2.d, q3.top, q3.d, mm.top, mm.d);  // r2 = partial_mul<k + 1>(q3, modulus);
@@ -451,13 +496,13 @@ void mod_t::_mod(BIGNUM& r, const BIGNUM& x) const {
   borrow &= (r1.d[k] == 0);
   uint64_t mask = constant_time_mask_64(borrow);
   for (int i = 0; i < k; i++) {
-    r1.d[i] = MASKED_SELECT(mask, r1.d[i], r2.d[i]);
+    r1.d[i] = masked_select(mask, r1.d[i], r2.d[i]);
   }
 
   borrow = ct_bn_sub_words(r2.d, r1.d, mm.d, k);
   mask = (uint64_t)0 - borrow;
   for (int i = 0; i < k; i++) {
-    r1.d[i] = MASKED_SELECT(mask, r1.d[i], r2.d[i]);
+    r1.d[i] = masked_select(mask, r1.d[i], r2.d[i]);
   }
 
   auto exp_res = bn_wexpand(&r, k);
@@ -503,8 +548,8 @@ bn_t mod_t::N_inv_mod_phiN_2048(const bn_t& N, const bn_t& phiN) {
     cb_assert(res);
     return result;
   }
-  assert(!phiN.is_odd());
-  assert(N.is_odd());
+  cb_assert(!phiN.is_odd());
+  cb_assert(N.is_odd());
   bn_t N_minus_phiN = LARGEST_PRIME_MOD_2048.sub(N, phiN);
   N_minus_phiN.correct_top();
   mod_t mod_N_minus_phiN(N_minus_phiN, false);

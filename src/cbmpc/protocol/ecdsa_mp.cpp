@@ -1,12 +1,12 @@
-#include "ecdsa_mp.h"
+#include <utility>
 
-#include <cbmpc/crypto/ro.h>
-#include <cbmpc/protocol/ot.h>
-#include <cbmpc/protocol/sid.h>
-#include <cbmpc/zk/zk_elgamal_com.h>
-#include <cbmpc/zk/zk_pedersen.h>
-
-#include "util.h"
+#include <cbmpc/internal/crypto/ro.h>
+#include <cbmpc/internal/protocol/ecdsa_mp.h>
+#include <cbmpc/internal/protocol/ot.h>
+#include <cbmpc/internal/protocol/sid.h>
+#include <cbmpc/internal/protocol/util.h>
+#include <cbmpc/internal/zk/zk_elgamal_com.h>
+#include <cbmpc/internal/zk/zk_pedersen.h>
 
 using namespace coinbase::mpc;
 
@@ -26,18 +26,19 @@ error_t refresh(job_mp_t& job, buf_t& sid, key_t& key, key_t& new_key) {
   return eckey::key_share_mp_t::refresh(job, sid, key, new_key);
 }
 
-error_t threshold_dkg(job_mp_t& job, ecurve_t curve, buf_t& sid, const crypto::ss::ac_t ac,
-                      const party_set_t& quorum_party_set, key_t& key) {
-  return eckey::key_share_mp_t::threshold_dkg(job, curve, sid, ac, quorum_party_set, key);
+error_t dkg_ac(job_mp_t& job, ecurve_t curve, buf_t& sid, const crypto::ss::ac_t ac,
+               const party_set_t& quorum_party_set, key_t& key) {
+  return eckey::key_share_mp_t::dkg_ac(job, curve, sid, ac, quorum_party_set, key);
 }
 
-error_t threshold_refresh(job_mp_t& job, ecurve_t curve, buf_t& sid, const crypto::ss::ac_t ac,
-                          const party_set_t& quorum_party_set, key_t& key, key_t& new_key) {
-  return eckey::key_share_mp_t::threshold_refresh(job, curve, sid, ac, quorum_party_set, key, new_key);
+error_t refresh_ac(job_mp_t& job, ecurve_t curve, buf_t& sid, const crypto::ss::ac_t ac,
+                   const party_set_t& quorum_party_set, key_t& key, key_t& new_key) {
+  return eckey::key_share_mp_t::refresh_ac(job, curve, sid, ac, quorum_party_set, key, new_key);
 }
 
 error_t sign(job_mp_t& job, key_t& key, mem_t msg, const party_idx_t sig_receiver,
              const std::vector<std::vector<int>>& ot_role_map, buf_t& sig) {
+  sig.free();
   error_t rv = UNINITIALIZED_ERROR;
 
   int peers_count = job.get_n_parties();
@@ -145,7 +146,7 @@ error_t sign(job_mp_t& job, key_t& key, mem_t msg, const party_idx_t sig_receive
     if (i == j) continue;
     if (h_gen._j != h_gen.msg) return coinbase::error(E_CRYPTO);
     if (rv = coinbase::crypto::commitment_t(sid_i._j, job.get_pid(j)).set(rho._j, c._j).open(Ei_gen._j, j)) return rv;
-    // Verifying that Ei_gen values are valid is done in the following verification function
+    if (rv = curve.check(Ei_gen._j)) return coinbase::error(rv, "ecdsa_mp: Ei_gen is not on the session curve");
     if (rv = pi_s._j.verify(Ei_gen._j, sid, peers_count + j)) return rv;
   }
   const std::vector<ecc_point_t>& E_i = Ei_gen.all_received();
@@ -227,18 +228,18 @@ error_t sign(job_mp_t& job, key_t& key, mem_t msg, const party_idx_t sig_receive
       for (int t = 0; t < 4; t++) X[l][j][t] = bn_t::from_bin(X_bin[l * 4 + t]);
   }
 
+  // Validate received round-3 broadcast payloads before hashing them into the transcript.
+  for (int j = 0; j < n; j++) {
+    if (i == j) continue;
+    if (rv = pi_eK._j.verify(E, eK_i._j, sid, n_uc_elgamal_com_proofs * j + 0)) return rv;
+    if (rv = pi_eRHO._j.verify(E, eRHO_i._j, sid, n_uc_elgamal_com_proofs * j + 1)) return rv;
+  }
+
   // Initialize the view
   crypto::sha256_t view;
   view.update(E_i, eK_i._js, eRHO_i._js, pi_eK._js, pi_eRHO._js);
 
   // Proceed with message 4 of the signing protocol
-  for (int j = 0; j < n; j++) {
-    if (i == j) continue;
-    // The check for validating eK_i and eRHO_i is done in the verify function
-    if (rv = pi_eK._j.verify(E, eK_i._j, sid, n_uc_elgamal_com_proofs * j + 0)) return rv;
-    if (rv = pi_eRHO._j.verify(E, eRHO_i._j, sid, n_uc_elgamal_com_proofs * j + 1)) return rv;
-  }
-
   auto seed = job.nonuniform_msg<buf256_t>();
   auto v_theta = job.nonuniform_msg<std::array<bn_t, 4>>();
 
@@ -479,9 +480,10 @@ error_t sign(job_mp_t& job, key_t& key, mem_t msg, const party_idx_t sig_receive
 
     bn_t s_reduced = q - s;
     if (s_reduced < s) s = s_reduced;
-    sig = crypto::ecdsa_signature_t(curve, r, s).to_der();
+    buf_t candidate_sig = crypto::ecdsa_signature_t(curve, r, s).to_der();
     crypto::ecc_pub_key_t pub(key.Q);
-    if (rv = pub.verify(msg, sig)) return rv;
+    if (rv = pub.verify(msg, candidate_sig)) return rv;
+    sig = std::move(candidate_sig);
   }
 
   return SUCCESS;

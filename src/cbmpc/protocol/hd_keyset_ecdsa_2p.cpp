@@ -1,14 +1,11 @@
 #include <cbmpc/core/precompiled.h>
-
-#include "hd_keyset_ecdsa_2p.h"
-
-#include <cbmpc/crypto/base.h>
-#include <cbmpc/crypto/commitment.h>
-#include <cbmpc/protocol/sid.h>
-#include <cbmpc/zk/zk_ec.h>
-#include <cbmpc/zk/zk_paillier.h>
-
-#include "ec_dkg.h"
+#include <cbmpc/internal/crypto/base.h>
+#include <cbmpc/internal/crypto/commitment.h>
+#include <cbmpc/internal/protocol/ec_dkg.h>
+#include <cbmpc/internal/protocol/hd_keyset_ecdsa_2p.h>
+#include <cbmpc/internal/protocol/sid.h>
+#include <cbmpc/internal/zk/zk_ec.h>
+#include <cbmpc/internal/zk/zk_paillier.h>
 
 using namespace coinbase;
 
@@ -104,6 +101,8 @@ error_t key_share_ecdsa_hdmpc_2p_t::derive_keys(job_2p_t& job, const key_share_e
   if (sid.empty()) {
     if (rv = generate_sid_fixed_mp(job, sid)) return rv;
   }
+  const buf256_t derive_sid = crypto::sha256_t::hash(std::string("ecdsa-hd-keyset-2p-derive"), uint64_t(sid.size()),
+                                                     sid, hardened_path, non_hardened_paths);
 
   ecurve_t curve = key.curve;
   const auto& G = curve.generator();
@@ -111,8 +110,8 @@ error_t key_share_ecdsa_hdmpc_2p_t::derive_keys(job_2p_t& job, const key_share_e
 
   bn_t x_share = key.root.x_share;
   bn_t k_share = key.root.k_share;
-  ecc_point_t K_share = key.root.K_share();
-  ecc_point_t other_K_share = key.root.other_K_share();
+  ecc_point_t K_share = key.root.get_K_share();
+  ecc_point_t other_K_share = key.root.get_other_K_share();
   ecc_point_t Q = key.root.Q;
 
   // This is VRF-Compute-2P in the spec
@@ -127,21 +126,21 @@ error_t key_share_ecdsa_hdmpc_2p_t::derive_keys(job_2p_t& job, const key_share_e
   zk::dh_t zk_dh1, zk_dh2;
 
   if (job.is_p1()) {
-    zk_dh1.prove(P, K_share, Z1, k_share, sid, 1);
+    zk_dh1.prove(P, K_share, Z1, k_share, derive_sid, 1);
   }
 
   if (rv = job.p1_to_p2(Z1, zk_dh1)) return rv;
 
   if (job.is_p2()) {
     // Verification that Z1 is valid is done in the verify function
-    if (rv = zk_dh1.verify(P, other_K_share, Z1, sid, 1)) return rv;
-    zk_dh2.prove(P, K_share, Z2, k_share, sid, 2);
+    if (rv = zk_dh1.verify(P, other_K_share, Z1, derive_sid, 1)) return rv;
+    zk_dh2.prove(P, K_share, Z2, k_share, derive_sid, 2);
   }
 
   if (rv = job.p2_to_p1(Z2, zk_dh2)) return rv;
 
   if (job.is_p1()) {
-    if (rv = zk_dh2.verify(P, other_K_share, Z2, sid, 2)) return rv;
+    if (rv = zk_dh2.verify(P, other_K_share, Z2, derive_sid, 2)) return rv;
   }
   ecc_point_t Z = Z1 + Z2;
   // The rest of Hard-Derive-2P
@@ -151,6 +150,7 @@ error_t key_share_ecdsa_hdmpc_2p_t::derive_keys(job_2p_t& job, const key_share_e
   buf_t chain_code = y.skip(delta_size);
 
   int n_hd_paths = (int)non_hardened_paths.size();
+  derived_keys.resize(n_hd_paths);
 
   ecc_point_t delta_G = delta * G;
   ecc_point_t Q_derived = Q + delta_G;

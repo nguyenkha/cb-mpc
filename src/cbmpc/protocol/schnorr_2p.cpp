@@ -1,14 +1,15 @@
-#include "schnorr_2p.h"
+#include <utility>
 
-#include <cbmpc/crypto/base_ecc_secp256k1.h>
-#include <cbmpc/protocol/agree_random.h>
-#include <cbmpc/protocol/ec_dkg.h>
-
-#include "util.h"
+#include <cbmpc/internal/crypto/base_ecc_secp256k1.h>
+#include <cbmpc/internal/protocol/agree_random.h>
+#include <cbmpc/internal/protocol/ec_dkg.h>
+#include <cbmpc/internal/protocol/schnorr_2p.h>
+#include <cbmpc/internal/protocol/util.h>
 
 namespace coinbase::mpc::schnorr2p {
 
 error_t sign(job_2p_t& job, key_t& key, const mem_t& msg, buf_t& sig, variant_e variant) {
+  sig.free();
   error_t rv = UNINITIALIZED_ERROR;
   std::vector<mem_t> msgs(1, msg);
   std::vector<buf_t> sigs;
@@ -19,9 +20,9 @@ error_t sign(job_2p_t& job, key_t& key, const mem_t& msg, buf_t& sig, variant_e 
 
 error_t sign_batch(job_2p_t& job, key_t& key, const std::vector<mem_t>& msgs, std::vector<buf_t>& sigs,
                    variant_e variant) {
+  sigs.clear();
   int n_sigs = msgs.size();
   if (n_sigs <= 0) return coinbase::error(E_BADARG, "schnorr_2p: empty batch");
-  sigs.resize(n_sigs);
 
   error_t rv = UNINITIALIZED_ERROR;
   ecurve_t curve = key.curve;
@@ -55,8 +56,10 @@ error_t sign_batch(job_2p_t& job, key_t& key, const std::vector<mem_t>& msgs, st
     return coinbase::error(E_CRYPTO, "schnorr_2p: inconsistent batch size (R2)");
 
   if (job.is_p1()) {
-    // point checks are covered by the zk proof
     sid = crypto::sha256_t::hash(sid1, sid2);
+    for (const auto& point : R2) {
+      if (rv = curve.check(point)) return coinbase::error(rv, "schnorr_2p: R2 check failed");
+    }
     if (rv = zk_dl2.verify(R2, sid, 2)) return rv;
     zk_dl1.prove(R1, k1, sid, 1);
   }
@@ -64,8 +67,10 @@ error_t sign_batch(job_2p_t& job, key_t& key, const std::vector<mem_t>& msgs, st
 
   if (job.is_p2()) {
     if (R1.size() != size_t(n_sigs)) return coinbase::error(E_CRYPTO, "schnorr_2p: inconsistent batch size (R1)");
-    // point checks are covered by the zk proof
     if (rv = com.id(sid1, job.get_pid(party_t::p1)).open(R1)) return rv;
+    for (const auto& point : R1) {
+      if (rv = curve.check(point)) return coinbase::error(rv, "schnorr_2p: R1 check failed");
+    }
     if (rv = zk_dl1.verify(R1, sid, 1)) return rv;
   }
 
@@ -76,6 +81,8 @@ error_t sign_batch(job_2p_t& job, key_t& key, const std::vector<mem_t>& msgs, st
   if (variant == variant_e::BIP340) {
     if (curve != crypto::curve_secp256k1) return coinbase::error(E_BADARG, "BIP340 variant requires secp256k1 curve");
     for (int i = 0; i < n_sigs; i++) {
+      if (msgs[i].size != 32) return coinbase::error(E_BADARG, "schnorr_2p: BIP340 msg size != 32");
+      if (!msgs[i].data) return coinbase::error(E_BADARG, "schnorr_2p: BIP340 msg is null");
       bn_t rx, ry;
       R[i].get_coordinates(rx, ry);
       if (ry.is_odd()) {
@@ -105,6 +112,7 @@ error_t sign_batch(job_2p_t& job, key_t& key, const std::vector<mem_t>& msgs, st
 
   if (rv = job.p2_to_p1(s2)) return rv;
 
+  std::vector<buf_t> candidate_sigs(n_sigs);
   if (job.is_p1()) {
     if (s2.size() != size_t(n_sigs)) return coinbase::error(E_CRYPTO, "schnorr_2p: inconsistent batch size (s2)");
     for (int i = 0; i < n_sigs; i++) {
@@ -115,21 +123,23 @@ error_t sign_batch(job_2p_t& job, key_t& key, const std::vector<mem_t>& msgs, st
       }
 
       if (variant == variant_e::EdDSA) {
-        sigs[i] = R[i].to_compressed_bin() + s.to_bin(crypto::ed25519::prv_bin_size()).rev();
+        candidate_sigs[i] = R[i].to_compressed_bin() + s.to_bin(crypto::ed25519::prv_bin_size()).rev();
         crypto::ecc_pub_key_t pub_key(key.Q);
-        if (rv = pub_key.verify(msgs[i], sigs[i])) return coinbase::error(rv, "schnorr_2p: eddsa verify failed");
+        if (rv = pub_key.verify(msgs[i], candidate_sigs[i]))
+          return coinbase::error(rv, "schnorr_2p: eddsa verify failed");
       } else if (variant == variant_e::BIP340) {
         bn_t rx, ry;
         R[i].get_coordinates(rx, ry);
-        sigs[i] = rx.to_bin(32) + s.to_bin(32);
+        candidate_sigs[i] = rx.to_bin(32) + s.to_bin(32);
         crypto::ecc_pub_key_t pub_key(key.Q);
-        if (rv = crypto::bip340::verify(pub_key, msgs[i], sigs[i]))
+        if (rv = crypto::bip340::verify(pub_key, msgs[i], candidate_sigs[i]))
           return coinbase::error(rv, "schnorr_2p: secp256k1 verify failed");
       } else {
         cb_assert(false && "schnorr_2p: non-existing variant");
       }
     }
   }
+  sigs = std::move(candidate_sigs);
   return SUCCESS;
 }
 

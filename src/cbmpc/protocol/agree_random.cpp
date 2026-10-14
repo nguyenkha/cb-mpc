@@ -1,11 +1,12 @@
-#include "agree_random.h"
-
-#include <cbmpc/crypto/commitment.h>
-#include <cbmpc/protocol/committed_broadcast.h>
+#include <cbmpc/internal/crypto/commitment.h>
+#include <cbmpc/internal/protocol/agree_random.h>
+#include <cbmpc/internal/protocol/committed_broadcast.h>
 
 namespace coinbase::mpc {
 
 error_t agree_random(job_2p_t& job, int bitlen, buf_t& out) {
+  if (bitlen <= 0) return coinbase::error(E_BADARG, "agree_random: bitlen must be positive");
+
   error_t rv = UNINITIALIZED_ERROR;
   buf_t r1, r2;
   const crypto::mpc_pid_t& sender_pid = job.get_pid(party_t::p1);

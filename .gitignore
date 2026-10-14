@@ -15,6 +15,7 @@ a.out
 
 # CMake generated files
 **build/
+cmake_test_discovery_*.json
 
 # ctest files
 **Testing/
@@ -32,3 +33,6 @@ cb-mpc-ts/src/*.js
 
 # macOS
 .DS_Store
+
+# Internal tool outputs for human review
+internal_tools/doc-generator/pdf-diffs/

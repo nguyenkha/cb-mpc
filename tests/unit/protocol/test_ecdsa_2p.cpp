@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 
-#include <cbmpc/protocol/ecdsa_2p.h>
+#include <cbmpc/internal/core/convert.h>
+#include <cbmpc/internal/core/log.h>
+#include <cbmpc/internal/crypto/base_ecc.h>
+#include <cbmpc/internal/protocol/ecdsa_2p.h>
 
 #include "utils/local_network/mpc_tester.h"
 
@@ -61,6 +64,28 @@ TEST_F(ECDSA2PC, PaillierKeygenInteractive) {
   dkg.step3_p1_to_p2(p, x1, Q1, prover_pid, sid);
   error_t rv = dkg.step4_p2_output(p, Q1, c_key, prover_pid, sid);
   ASSERT_EQ(rv, 0);
+}
+
+TEST_F(ECDSA2PC, PaillierKeygenInteractiveRejectsInvalidModulus) {
+  dylog_disable_scope_t no_log_err;
+  paillier_gen_interactive_t dkg(coinbase::crypto::pid_from_name("test"));
+  dkg.N = 2;
+
+  coinbase::crypto::paillier_t paillier;
+  const error_t rv = dkg.step4_p2_output(paillier, coinbase::crypto::curve_secp256k1.generator(), bn_t(0),
+                                         coinbase::crypto::pid_from_name("test"), coinbase::mem_t());
+  EXPECT_EQ(rv, E_CRYPTO);
+}
+
+TEST_F(ECDSA2PC, PaillierKeygenInteractiveRejectsOversizedModulus) {
+  dylog_disable_scope_t no_log_err;
+  paillier_gen_interactive_t dkg(coinbase::crypto::pid_from_name("test"));
+  dkg.N = (bn_t(1) << crypto::paillier_t::bit_size) + 1;
+
+  coinbase::crypto::paillier_t paillier;
+  const error_t rv = dkg.step4_p2_output(paillier, coinbase::crypto::curve_secp256k1.generator(), bn_t(0),
+                                         coinbase::crypto::pid_from_name("test"), coinbase::mem_t());
+  EXPECT_EQ(rv, E_CRYPTO);
 }
 
 TEST_F(ECDSA2PC, OptimizedKeygen) {
@@ -159,6 +184,57 @@ TEST_F(ECDSA2PC, Sign) {
   });
 }
 
+TEST_F(ECDSA2PC, VerificationFailureClearsSignatureOutputs) {
+  buf_t data = crypto::gen_random(32);
+  const std::vector<mem_t> msgs = {data};
+  std::vector<ecdsa2pc::key_t> keys(2);
+  const auto curve = crypto::curve_secp256k1;
+  const auto& q = curve.order();
+  const auto& G = curve.generator();
+
+  keys[0].role = party_t::p1;
+  keys[1].role = party_t::p2;
+  keys[0].curve = keys[1].curve = curve;
+  keys[0].x_share = bn_t::rand(q);
+  keys[1].x_share = bn_t::rand(q);
+  keys[0].Q = keys[1].Q = keys[0].x_share * G + keys[1].x_share * G;
+  keys[0].paillier.generate();
+  keys[1].paillier.create_pub(keys[0].paillier.get_N());
+  keys[0].c_key = keys[0].paillier.encrypt(keys[0].x_share);
+  keys[1].c_key = keys[0].c_key;
+
+  // Global-abort signing does not use Q until final signature verification.
+  // Give P1 a different verification key to force that final check to fail.
+  keys[0].Q += G;
+
+  std::vector<error_t> results(2, UNINITIALIZED_ERROR);
+  std::vector<buf_t> batch_sids(2);
+  std::vector<std::vector<buf_t>> batch_sigs(2, std::vector<buf_t>{buf_t(1)});
+  mpc_runner->run_2pc([&](job_2p_t& job) {
+    const int party_index = job.get_party_idx();
+    dylog_disable_scope_t no_log_err;
+    results[party_index] =
+        sign_with_global_abort_batch(job, batch_sids[party_index], keys[party_index], msgs, batch_sigs[party_index]);
+  });
+
+  EXPECT_EQ(results[0], E_ECDSA_2P_BIT_LEAK);
+  EXPECT_EQ(results[1], SUCCESS);
+  EXPECT_TRUE(batch_sigs[0].empty());
+
+  std::vector<buf_t> sids(2);
+  std::vector<buf_t> sigs(2, buf_t(1));
+  mpc_runner->run_2pc([&](job_2p_t& job) {
+    const int party_index = job.get_party_idx();
+    dylog_disable_scope_t no_log_err;
+    results[party_index] = sign_with_global_abort(job, sids[party_index], keys[party_index], data, sigs[party_index]);
+  });
+
+  EXPECT_EQ(results[0], E_ECDSA_2P_BIT_LEAK);
+  EXPECT_EQ(results[1], SUCCESS);
+  EXPECT_TRUE(sigs[0].empty());
+  EXPECT_TRUE(sigs[1].empty());
+}
+
 TEST_F(ECDSA2PC, KeygenSign) {
   buf_t data = coinbase::crypto::gen_random(32);
   std::vector<ecdsa2pc::key_t> keys(2);
@@ -183,52 +259,42 @@ TEST_F(ECDSA2PC, KeygenSign) {
   check_key_pair(keys[0], keys[1]);
 }
 
-TEST_F(ECDSA2PC, ParallelKSRS8) {
-  int parallel_count = 4;
-  std::vector<std::vector<buf_t>> data(parallel_count);
-  for (int i = 0; i < parallel_count; i++) {
-    int len = i + 1;
-    data[i].resize(len);
-    for (int j = 0; j < len; j++) data[i][j] = coinbase::crypto::gen_random(32);
-  }
-  std::vector<std::vector<ecdsa2pc::key_t>> keys(parallel_count, std::vector<ecdsa2pc::key_t>(2));
-  std::vector<std::vector<ecdsa2pc::key_t>> new_keys(parallel_count, std::vector<ecdsa2pc::key_t>(2));
-  buf_t sid = coinbase::crypto::gen_random_bitlen(SEC_P_COM);
+TEST_F(ECDSA2PC, RefreshManyTimesThenSign) {
+  constexpr int kRefreshCount = 20;
+  buf_t data = coinbase::crypto::gen_random(32);
+  std::vector<ecdsa2pc::key_t> keys(2);
+  std::vector<buf_t> sigs(2);
 
-  mpc_runner->run_2pc_parallel(parallel_count, [&data, &keys, &new_keys, &sid](job_parallel_2p_t& job, int th_i) {
+  mpc_runner->run_2pc([&data, &keys, &sigs](job_2p_t& job) {
     error_t rv = UNINITIALIZED_ERROR;
     auto party_index = job.get_party_idx();
     ecurve_t curve = coinbase::crypto::curve_secp256k1;
 
-    ecdsa2pc::key_t& key = keys[th_i][party_index];
+    ecdsa2pc::key_t key;
     rv = ecdsa2pc::dkg(job, curve, key);
     ASSERT_EQ(rv, 0);
 
-    std::vector<buf_t> sig_bufs;
+    for (int i = 0; i < kRefreshCount; i++) {
+      ecdsa2pc::key_t refreshed_key;
+      rv = ecdsa2pc::refresh(job, key, refreshed_key);
+      ASSERT_EQ(rv, 0);
+      key = refreshed_key;
+    }
+
+    keys[party_index] = key;
+
     buf_t session_id;
-    rv = sign_batch(job, session_id, key, buf_t::to_mems(data[th_i]), sig_bufs);
-    ASSERT_EQ(rv, 0);
-
-    ecdsa2pc::key_t& new_key = new_keys[th_i][party_index];
-    rv = ecdsa2pc::refresh(job, key, new_key);
-    ASSERT_EQ(rv, 0);
-
-    EXPECT_EQ(new_key.role, key.role);
-    EXPECT_EQ(new_key.curve, key.curve);
-    EXPECT_EQ(new_key.Q, key.Q);
-    EXPECT_NE(new_key.x_share, key.x_share);
-
-    std::vector<buf_t> new_sig_bufs;
-    rv = sign_batch(job, session_id, key, buf_t::to_mems(data[th_i]), new_sig_bufs);
-    ASSERT_EQ(rv, 0);
-    rv = sign_with_global_abort_batch(job, session_id, key, buf_t::to_mems(data[th_i]), new_sig_bufs);
+    rv = sign(job, session_id, key, data, sigs[party_index]);
     ASSERT_EQ(rv, 0);
   });
 
-  for (int i = 0; i < parallel_count; i++) {
-    check_key_pair(keys[i][0], keys[i][1]);
-    check_key_pair(new_keys[i][0], new_keys[i][1]);
-  }
+  check_key_pair(keys[0], keys[1]);
+  EXPECT_GT(keys[0].x_share.get_bits_count(), keys[0].curve.order().get_bits_count());
+
+  const crypto::ecc_pub_key_t verify_key(keys[0].Q);
+  ASSERT_GT(sigs[0].size(), 0);
+  EXPECT_EQ(sigs[1].size(), 0);
+  ASSERT_EQ(verify_key.verify(data, sigs[0]), SUCCESS);
 }
 
 TEST_F(ECDSA2PC, Integer_Commit) {
@@ -281,6 +347,96 @@ TEST_F(ECDSA2PC, Integer_Commit) {
   zk.prove(paillier, c_key_tag, pai_c, Q2, R2, m, r, k2, x2, rho, rc, sid, 0);
   rv = zk.verify(curve, paillier, c_key_tag, pai_c, Q2, R2, m, r, sid, 0);
   ASSERT_EQ(rv, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Security regression test: null-curve ecc_point_t deserialization DoS.
+//
+// During ECDSA-2PC signing, P2 sends P1 the ZK proof
+// `zk_ecdsa_sign_2pc_integer_commit_t` (via job_2p_t::p2_to_p1 -> receive ->
+// deser). Previously, a malicious P2 could serialize one of the proof's
+// ecc_point_t fields (here `G_tag`) with curve_code == 0x0000. The decoder
+// accepted that sentinel on the read path and produced an ecc_point_t whose
+// curve pointer was null.
+//
+// `zk_ecdsa_sign_2pc_integer_commit_t::verify()` also fed `G_tag` into
+// `crypto::ro::hash_string(...)` before `curve.check(G_tag)`, so an in-memory
+// null-curve proof object could dereference the null curve pointer before
+// validation.
+//
+// The regression checks both defenses:
+//   1. verify() validates proof points before hashing them,
+//   2. deserialization rejects curve_code == 0 for an ecc_point_t field.
+TEST_F(ECDSA2PC, Integer_Commit_NullCurvePoint_Rejected) {
+  ecurve_t curve = coinbase::crypto::curve_secp256k1;
+  ecc_point_t G = curve.generator();
+  const mod_t& q = curve.order();
+
+  bn_t m = bn_t::rand(q);
+
+  crypto::paillier_t paillier;
+  paillier.generate();
+  const mod_t& N = paillier.get_N();
+
+  bn_t x1 = bn_t::rand(q);
+  bn_t x2 = bn_t::rand(q);
+
+  bn_t k1 = curve.get_random_value();
+  bn_t k2 = curve.get_random_value();
+  bn_t k2_inv = q.inv(k2, mod_t::inv_algo_e::RandomMasking);
+
+  ecc_point_t Q1 = x1 * G;
+  ecc_point_t Q2 = x2 * G;
+
+  ecc_point_t R1 = k1 * G;
+  ecc_point_t R2 = k2 * G;
+
+  ecc_point_t R = R1 + R2;
+  bn_t r = R.get_x() % q;
+
+  bn_t r_key = bn_t::rand(N);
+  bn_t c_key = paillier.encrypt(x1, r_key);
+
+  bn_t rho = bn_t::rand((q * q) << (SEC_P_STAT * 2));
+
+  bn_t temp;
+  MODULO(q) temp = k2_inv * x2;
+  temp = k2_inv * m + temp * r + rho * q;
+  bn_t rc = bn_t::rand(N);
+  ASSERT_EQ(mod_t::coprime(rc, N), 1);
+  auto c_tag = paillier.enc(temp, rc);
+
+  crypto::paillier_t::rerand_scope_t paillier_rerand(crypto::paillier_t::rerand_e::off);
+  crypto::paillier_t::elem_t c_key_tag = paillier.elem(c_key) + (q << SEC_P_STAT);
+  crypto::paillier_t::elem_t pai_c = c_key_tag * (k2_inv * r) + c_tag;
+
+  buf_t sid = coinbase::crypto::gen_random_bitlen(SEC_P_COM);
+
+  zk_ecdsa_sign_2pc_integer_commit_t zk;
+  zk.prove(paillier, c_key_tag, pai_c, Q2, R2, m, r, k2, x2, rho, rc, sid, 0);
+
+  // Baseline: the honest, untampered proof verifies successfully.
+  ASSERT_EQ(zk.verify(curve, paillier, c_key_tag, pai_c, Q2, R2, m, r, sid, 0), SUCCESS);
+
+  // Malicious P2 replaces G_tag with a null-curve point.
+  zk.G_tag = ecc_point_t();
+  ASSERT_FALSE(zk.G_tag.get_curve().valid());
+
+  // Defense in depth: verify() must reject the invalid point before hashing it.
+  {
+    dylog_disable_scope_t no_log_err;
+    EXPECT_NE(zk.verify(curve, paillier, c_key_tag, pai_c, Q2, R2, m, r, sid, 0), SUCCESS);
+  }
+
+  // `ser`/`deser` are the exact codec used by job_2p_t messaging. A null-curve
+  // ecc_point_t emits curve_code == 0x0000 on write, but that sentinel is no
+  // longer accepted from attacker-controlled input on read.
+  buf_t wire = coinbase::ser(zk);
+  zk_ecdsa_sign_2pc_integer_commit_t received;
+  {
+    dylog_disable_scope_t no_log_err;
+    EXPECT_NE(coinbase::deser(wire, received), SUCCESS);
+  }
 }
 
 }  // namespace
