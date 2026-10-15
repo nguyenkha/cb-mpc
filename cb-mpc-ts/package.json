@@ -32,10 +32,14 @@
     "demo:bun-ffi": "bun run examples/bun-ffi-demo.ts",
     "demo:key-serialization": "bun run examples/key-serialization.ts",
     "demo:pve-backup": "bun run examples/pve-backup.ts",
-    "demo:ac-reshare": "bun run examples/ac-reshare.ts"
+    "demo:ac-reshare": "bun run examples/ac-reshare.ts",
+    "demo:hd-keyset": "bun run examples/hd-keyset.ts",
+    "demo:hd-bitcoin-wallet": "bun run examples/hd-bitcoin-wallet.ts"
   },
   "devDependencies": {
+    "@noble/curves": "^1.9.1",
     "@scure/bip32": "^1.7.0",
+    "@scure/btc-signer": "^1.8.1",
     "@types/debug": "^4.1.12",
     "@types/node": "^25.5.0",
     "typescript": "^5.4.0"

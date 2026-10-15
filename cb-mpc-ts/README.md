@@ -362,6 +362,8 @@ See [examples/browser.html](examples/browser.html) for a full demo.
 | [key-serialization.ts](examples/key-serialization.ts) | Serialize/deserialize all key types |
 | [pve-backup.ts](examples/pve-backup.ts) | PVE backup of key shares: encrypt, verify, decrypt |
 | [ac-reshare.ts](examples/ac-reshare.ts) | 2-of-3 keys: reshare a 2P key, lost-device replacement, sign with any pair |
+| [hd-keyset.ts](examples/hd-keyset.ts) | HD keyset: DKG, xpub, derive + sign, refresh, serialize, upgrade an existing key, Ed25519 |
+| [hd-bitcoin-wallet.ts](examples/hd-bitcoin-wallet.ts) | Dry-run Bitcoin HD wallet: 5 addresses from the xpub, 10-input tx with change, MPC signing, timings (needs dev dependencies) |
 | [browser.html](examples/browser.html) | Browser WASM demo |
 
 Run examples with:
