@@ -22,6 +22,7 @@ constexpr int kMaxPathsPerCall = 1024;
 // Big-endian uint32 array -> path. Rejects ragged buffers and absurd depths.
 error_t parse_path(mem_t bytes, coinbase::mpc::bip32_path_t& out) {
   if (bytes.size < 0 || bytes.size % 4 != 0 || bytes.size / 4 > kMaxPathDepth) return E_BADARG;
+  if (bytes.size > 0 && !bytes.data) return E_BADARG;
   out = coinbase::mpc::bip32_path_t();
   for (int i = 0; i < bytes.size; i += 4) out.append(coinbase::be_get_4(bytes.data + i));
   return SUCCESS;
@@ -178,7 +179,11 @@ int derive_c(job_2p_ref* j, KS* ks, cmem_t* hardened_path, cmems_t* non_hardened
   std::vector<KEY> keys;
   if (error_t rv = KS::derive_keys(*job, *ks, hp, paths, sid, keys)) return rv;
   if (static_cast<int>(keys.size()) != count) return E_GENERAL;
-  for (int i = 0; i < count; i++) out_keys[i] = REF{new KEY(std::move(keys[i]))};
+  // Build every handle first so an allocation failure leaks no key material.
+  std::vector<std::unique_ptr<KEY>> owned;
+  owned.reserve(count);
+  for (int i = 0; i < count; i++) owned.push_back(std::make_unique<KEY>(std::move(keys[i])));
+  for (int i = 0; i < count; i++) out_keys[i] = REF{owned[i].release()};
   return 0;
 }
 
@@ -236,7 +241,7 @@ int mpc_hd_ecdsa2p_refresh(job_2p_ref* j, mpc_hd_ecdsa2p_ref* ks, mpc_hd_ecdsa2p
 
 int mpc_hd_ecdsa2p_derive(job_2p_ref* j, mpc_hd_ecdsa2p_ref* ks, cmem_t* hardened_path, cmems_t* non_hardened_paths,
                           cmem_t* sid, mpc_ecdsa2pc_key_ref* out_keys, int count) {
-  if (out_keys && count > 0 && count <= kMaxPathsPerCall)
+  if (out_keys && count > 0)
     for (int i = 0; i < count; i++) out_keys[i] = mpc_ecdsa2pc_key_ref{nullptr};
   return guard_rv([&]() -> int {
     if (!valid_ref(ks)) return E_BADARG;
@@ -366,7 +371,7 @@ int mpc_hd_eddsa2p_refresh(job_2p_ref* j, mpc_hd_eddsa2p_ref* ks, mpc_hd_eddsa2p
 
 int mpc_hd_eddsa2p_derive(job_2p_ref* j, mpc_hd_eddsa2p_ref* ks, cmem_t* hardened_path, cmems_t* non_hardened_paths,
                           cmem_t* sid, mpc_eckey_2p_ref* out_keys, int count) {
-  if (out_keys && count > 0 && count <= kMaxPathsPerCall)
+  if (out_keys && count > 0)
     for (int i = 0; i < count; i++) out_keys[i] = mpc_eckey_2p_ref{nullptr};
   return guard_rv([&]() -> int {
     if (!valid_ref(ks)) return E_BADARG;

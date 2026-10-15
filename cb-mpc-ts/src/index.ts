@@ -1436,8 +1436,11 @@ export class CbMpc {
   ): Promise<number[]> {
     const label = kind === "ecdsa2p" ? "hdEcdsa2pDerive" : "hdEddsa2pDerive";
     if (nonHardenedPaths.length < 1) throw new RangeError(`${label}: need at least one non-hardened path`);
-    const hardened = this.mod.writeCmem(CbMpc.encodePath(hardenedPath, false, label));
-    const paths = this.mod.writeCmems(nonHardenedPaths.map((p) => CbMpc.encodePath(p, true, label)));
+    // Encode (and validate) every path before allocating anything.
+    const hardenedBytes = CbMpc.encodePath(hardenedPath, false, label);
+    const pathBytes = nonHardenedPaths.map((p) => CbMpc.encodePath(p, true, label));
+    const hardened = this.mod.writeCmem(hardenedBytes);
+    const paths = this.mod.writeCmems(pathBytes);
     const sid = this.mod.writeCmem(sessionId);
     const ksRef = this.refOf(keyset);
     const n = nonHardenedPaths.length;
@@ -1464,7 +1467,8 @@ export class CbMpc {
     sessionId: Uint8Array,
   ): Promise<HdAccountNode> {
     const label = kind === "ecdsa2p" ? "hdEcdsa2pAccountNode" : "hdEddsa2pAccountNode";
-    const hardened = this.mod.writeCmem(CbMpc.encodePath(hardenedPath, false, label));
+    const hardenedBytes = CbMpc.encodePath(hardenedPath, false, label);
+    const hardened = this.mod.writeCmem(hardenedBytes);
     const sid = this.mod.writeCmem(sessionId);
     const ksRef = this.refOf(keyset);
     const pubOut = this.mod.malloc(this.mod.CMEM_SIZE);
