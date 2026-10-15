@@ -226,6 +226,56 @@ Notes:
 
 Measured over a real relay: `scripts/relay-bench/` (see the comments there for setup).
 
+## HD Keysets (2-party)
+
+One DKG gives a **keyset**; keys for any path are derived on demand with one
+short 2-party round (no Paillier, nothing per path to store). Built on upstream's
+"MPC-friendly" HD scheme ([SECURE_USAGE.md](https://github.com/coinbase/cb-mpc/blob/master/SECURE_USAGE.md),
+`docs/theory/mpc-friendly-derivation-theory.pdf`):
+
+- **hardened path** (e.g. `[44', 0', account']`): a 2-party VRF step, *not* BIP32
+  hardened derivation. Its result is an account node (public key + chain code).
+- **non-hardened paths** below it (e.g. `[[0, i], [1, j]]`): standard BIP32
+  public derivation. For secp256k1 the account node is a regular **xpub**:
+  any BIP32 library derives the same child public keys (and addresses) without MPC.
+
+```typescript
+const H = 0x80000000;
+const account = [44 + H, 0 + H, 0 + H];
+
+// once per user (or upgrade an existing ECDSA-2P key, keeping its address):
+const keyset = await mpc.hdEcdsa2pDkg(transport, partyIndex, names, NID_secp256k1);
+// const keyset = await mpc.hdEcdsa2pFromKey(transport, partyIndex, names, existingKey);
+
+// watch-only: xpub for the account (both parties get the same node)
+const node = await mpc.hdEcdsa2pAccountNode(transport, partyIndex, names, keyset, account);
+// e.g. new HDKey({ publicKey: node.publicKey, chainCode: node.chainCode }) from @scure/bip32
+
+// signing: derive the keys for the inputs being spent (one round for many paths)
+const [k0, k1] = await mpc.hdEcdsa2pDerive(transport, partyIndex, names, keyset, account, [[0, 5], [1, 2]]);
+await mpc.ecdsa2pSign(transport, partyIndex, names, k0, sid, [sighash]);  // ordinary Ecdsa2pKeyHandle
+
+const blob = mpc.serializeHdEcdsa2p(keyset);   // persist the keyset, not the derived keys
+```
+
+The same API exists for Ed25519 (`hdEddsa2pDkg`, `hdEddsa2pDerive` returning
+`EcKey2pHandle`, ...). Ed25519 has no BIP32 standard, so its account node is only
+usable with this library.
+
+Notes:
+
+- Addresses are **not** the same as a BIP39/BIP44 seed wallet using the same path
+  (the hardened step differs and there is no mnemonic). Only the subtree below each
+  hardened node is BIP32-compatible.
+- `hdEcdsa2pRefresh` refreshes the whole keyset; public keys and every derived
+  address stay the same. After `hdEcdsa2pFromKey`, back up the keyset (it has the
+  extra VRF share) and refresh the keyset instead of the old key.
+- Do not export a reconstructed private key of a derived address while the account
+  xpub is known: as in plain BIP32, a non-hardened child private key plus the xpub
+  reveals the account key, and with the hardened step's output (known to both
+  parties) the root key.
+- Indices in non-hardened paths must be below 2^31.
+
 ## Curve Codes
 
 ```typescript

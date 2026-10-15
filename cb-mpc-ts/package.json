@@ -35,6 +35,7 @@
     "demo:ac-reshare": "bun run examples/ac-reshare.ts"
   },
   "devDependencies": {
+    "@scure/bip32": "^1.7.0",
     "@types/debug": "^4.1.12",
     "@types/node": "^25.5.0",
     "typescript": "^5.4.0"

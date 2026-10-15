@@ -38,6 +38,10 @@ import type {
   EcKeyMpInfo,
   EcPoint,
   CbMpcWasmModule,
+  HdEcdsa2pKeysetHandle,
+  HdEddsa2pKeysetHandle,
+  HdKeysetInfo,
+  HdAccountNode,
 } from "./types.js";
 
 export type { CbMpcModule } from "./module.js";
@@ -1355,5 +1359,328 @@ export class CbMpc {
       this.mod.free(name1);
       this.unregisterTransport(transportId);
     }
+  }
+
+  // =========================================================================
+  // HD keysets (2-party ECDSA / EdDSA) -- see capi/hd_keyset.h
+  //
+  // A keyset is one DKG; keys for any path are derived on demand (nothing per
+  // path needs storing). Hardened path = account label (2-party VRF step,
+  // not BIP32 hardened); non-hardened paths = standard BIP32 below it.
+  // =========================================================================
+
+  /** Run a protocol call on a fresh 2-party job; frees the job and transport afterwards. */
+  private async withJob2p<T>(
+    transport: DataTransport,
+    partyIndex: number,
+    partyNames: [string, string],
+    label: string,
+    fn: (jobPtr: number) => Promise<T>,
+  ): Promise<T> {
+    const transportId = this.registerTransport(transport);
+    const name0 = this.mod.allocString(partyNames[0]);
+    const name1 = this.mod.allocString(partyNames[1]);
+    let jobPtr = 0;
+    try {
+      jobPtr = this.mod.call("wasm_new_job_2p", transportId, partyIndex, name0, name1);
+      if (!jobPtr) throw new CbMpcError(-1, `${label}: failed to create job`);
+      return await fn(jobPtr);
+    } finally {
+      if (jobPtr) this.mod.call("free_job_2p", jobPtr);
+      this.mod.free(name0);
+      this.mod.free(name1);
+      this.unregisterTransport(transportId);
+    }
+  }
+
+  /** Big-endian uint32 encoding of a path. */
+  private static encodePath(path: number[], nonHardened: boolean, label: string): Uint8Array {
+    const out = new Uint8Array(path.length * 4);
+    const view = new DataView(out.buffer);
+    path.forEach((index, i) => {
+      const max = nonHardened ? 0x7fffffff : 0xffffffff;
+      if (!Number.isInteger(index) || index < 0 || index > max) {
+        throw new RangeError(`${label}: invalid ${nonHardened ? "non-hardened " : ""}path index ${index}`);
+      }
+      view.setUint32(i * 4, index, false);
+    });
+    return out;
+  }
+
+  /** Call a "(job, handle-in, handle-out)" protocol function and return the new handle. */
+  private async hdHandleOp(jobPtr: number, fn: string, label: string, ...args: number[]): Promise<number> {
+    const outRef = this.mod.allocRef();
+    try {
+      const err = await this.mod.callAsync(fn, jobPtr, ...args, outRef);
+      const handle = this.mod.readRef(outRef);
+      checkError(err, label);
+      return handle;
+    } finally {
+      this.mod.free(outRef);
+    }
+  }
+
+  private refOf(handle: number): number {
+    const ref = this.mod.allocRef();
+    this.mod.setPointer(ref, handle);
+    return ref;
+  }
+
+  private async hdDerive(
+    kind: "ecdsa2p" | "eddsa2p",
+    jobPtr: number,
+    keyset: number,
+    hardenedPath: number[],
+    nonHardenedPaths: number[][],
+    sessionId: Uint8Array,
+  ): Promise<number[]> {
+    const label = kind === "ecdsa2p" ? "hdEcdsa2pDerive" : "hdEddsa2pDerive";
+    if (nonHardenedPaths.length < 1) throw new RangeError(`${label}: need at least one non-hardened path`);
+    const hardened = this.mod.writeCmem(CbMpc.encodePath(hardenedPath, false, label));
+    const paths = this.mod.writeCmems(nonHardenedPaths.map((p) => CbMpc.encodePath(p, true, label)));
+    const sid = this.mod.writeCmem(sessionId);
+    const ksRef = this.refOf(keyset);
+    const n = nonHardenedPaths.length;
+    const outKeys = this.mod.malloc(n * this.mod.POINTER_SIZE);
+    try {
+      const err = await this.mod.callAsync(`mpc_hd_${kind}_derive`, jobPtr, ksRef, hardened, paths, sid, outKeys, n);
+      const handles = Array.from({ length: n }, (_, i) => this.mod.getPointer(outKeys + i * this.mod.POINTER_SIZE));
+      checkError(err, label);
+      return handles;
+    } finally {
+      this.mod.free(outKeys);
+      this.mod.free(ksRef);
+      this.mod.freeCmem(sid);
+      this.mod.freeCmems(paths);
+      this.mod.freeCmem(hardened);
+    }
+  }
+
+  private async hdAccountNode(
+    kind: "ecdsa2p" | "eddsa2p",
+    jobPtr: number,
+    keyset: number,
+    hardenedPath: number[],
+    sessionId: Uint8Array,
+  ): Promise<HdAccountNode> {
+    const label = kind === "ecdsa2p" ? "hdEcdsa2pAccountNode" : "hdEddsa2pAccountNode";
+    const hardened = this.mod.writeCmem(CbMpc.encodePath(hardenedPath, false, label));
+    const sid = this.mod.writeCmem(sessionId);
+    const ksRef = this.refOf(keyset);
+    const pubOut = this.mod.malloc(this.mod.CMEM_SIZE);
+    const ccOut = this.mod.malloc(this.mod.CMEM_SIZE);
+    try {
+      const err = await this.mod.callAsync(`mpc_hd_${kind}_account_node`, jobPtr, ksRef, hardened, sid, pubOut, ccOut);
+      const publicKey = this.mod.readCmem(pubOut);
+      const chainCode = this.mod.readCmem(ccOut);
+      checkError(err, label);
+      return { publicKey, chainCode };
+    } finally {
+      this.mod.freeCmem(pubOut);
+      this.mod.freeCmem(ccOut);
+      this.mod.free(ksRef);
+      this.mod.freeCmem(sid);
+      this.mod.freeCmem(hardened);
+    }
+  }
+
+  private hdKeysetInfo(kind: "ecdsa2p" | "eddsa2p", keyset: number): HdKeysetInfo {
+    const ref = this.refOf(keyset);
+    try {
+      const roleIndex = this.mod.call(`mpc_hd_${kind}_get_role_index`, ref);
+      const curveCode = this.mod.call(`mpc_hd_${kind}_get_curve_code`, ref);
+      if (roleIndex < 0 || curveCode < 0) throw new CbMpcError(-1, `hd keyset info: invalid handle`);
+      const publicKey = this.extractPublicKey(`mpc_hd_${kind}_get_Q`, ref);
+      return { roleIndex, curveCode, publicKey };
+    } finally {
+      this.mod.free(ref);
+    }
+  }
+
+  private hdSerialize(kind: "ecdsa2p" | "eddsa2p", keyset: number): Uint8Array[] {
+    const ref = this.refOf(keyset);
+    const ser = this.mod.malloc(this.mod.POINTER_SIZE * 3);
+    try {
+      const err = this.mod.call(`serialize_mpc_hd_${kind}`, ref, ser);
+      const result = err === 0 ? this.mod.readCmems(ser) : [];
+      checkError(err, `serialize hd ${kind}`);
+      return result;
+    } finally {
+      this.mod.freeCmems(ser);
+      this.mod.free(ref);
+    }
+  }
+
+  private hdDeserialize(kind: "ecdsa2p" | "eddsa2p", data: Uint8Array[]): number {
+    const ser = this.mod.writeCmems(data);
+    const out = this.mod.allocRef();
+    try {
+      const err = this.mod.call(`deserialize_mpc_hd_${kind}`, ser, out);
+      const handle = this.mod.readRef(out);
+      checkError(err, `deserialize hd ${kind}`);
+      return handle;
+    } finally {
+      this.mod.free(out);
+      this.mod.freeCmems(ser);
+    }
+  }
+
+  private hdFree(kind: "ecdsa2p" | "eddsa2p", keyset: number): void {
+    const ref = this.refOf(keyset);
+    this.mod.call(`free_mpc_hd_${kind}`, ref);
+    this.mod.free(ref);
+  }
+
+  // ---- ECDSA-2P keysets ----------------------------------------------------
+
+  /** Create an ECDSA HD keyset (secp256k1 or P-256). One-time, like ecdsa2pDkg. */
+  async hdEcdsa2pDkg(
+    transport: DataTransport, partyIndex: number, partyNames: [string, string], curveCode: number,
+  ): Promise<HdEcdsa2pKeysetHandle> {
+    return this.withJob2p(transport, partyIndex, partyNames, "hdEcdsa2pDkg", async (job) =>
+      (await this.hdHandleOp(job, "mpc_hd_ecdsa2p_dkg", "hdEcdsa2pDkg", curveCode)) as HdEcdsa2pKeysetHandle);
+  }
+
+  /**
+   * Turn an existing ECDSA-2P key into an HD keyset (runs a small VRF-key DKG
+   * only). The root public key, and so the existing address, is unchanged; both
+   * parties must pass their shares of the same key.
+   */
+  async hdEcdsa2pFromKey(
+    transport: DataTransport, partyIndex: number, partyNames: [string, string], key: Ecdsa2pKeyHandle,
+  ): Promise<HdEcdsa2pKeysetHandle> {
+    return this.withJob2p(transport, partyIndex, partyNames, "hdEcdsa2pFromKey", async (job) => {
+      const keyRef = this.refOf(key as unknown as number);
+      try {
+        return (await this.hdHandleOp(job, "mpc_hd_ecdsa2p_from_key", "hdEcdsa2pFromKey", keyRef)) as HdEcdsa2pKeysetHandle;
+      } finally {
+        this.mod.free(keyRef);
+      }
+    });
+  }
+
+  /** Refresh a keyset (both signing and VRF shares). Public keys and all derived addresses stay the same. */
+  async hdEcdsa2pRefresh(
+    transport: DataTransport, partyIndex: number, partyNames: [string, string], keyset: HdEcdsa2pKeysetHandle,
+  ): Promise<HdEcdsa2pKeysetHandle> {
+    return this.withJob2p(transport, partyIndex, partyNames, "hdEcdsa2pRefresh", async (job) => {
+      const ref = this.refOf(keyset as unknown as number);
+      try {
+        return (await this.hdHandleOp(job, "mpc_hd_ecdsa2p_refresh", "hdEcdsa2pRefresh", ref)) as HdEcdsa2pKeysetHandle;
+      } finally {
+        this.mod.free(ref);
+      }
+    });
+  }
+
+  /**
+   * Derive ECDSA-2P keys for `hardenedPath` (e.g. [44', 0', account']) and each
+   * non-hardened path below it (e.g. [[0, 5], [1, 2]]) in one protocol run.
+   * The returned handles are ordinary Ecdsa2pKeyHandle (sign with ecdsa2pSign,
+   * free with freeEcdsa2pKey). Indices in `nonHardenedPaths` must be < 2^31.
+   */
+  async hdEcdsa2pDerive(
+    transport: DataTransport, partyIndex: number, partyNames: [string, string], keyset: HdEcdsa2pKeysetHandle,
+    hardenedPath: number[], nonHardenedPaths: number[][], sessionId: Uint8Array = new Uint8Array(0),
+  ): Promise<Ecdsa2pKeyHandle[]> {
+    return this.withJob2p(transport, partyIndex, partyNames, "hdEcdsa2pDerive", async (job) =>
+      (await this.hdDerive("ecdsa2p", job, keyset as unknown as number, hardenedPath, nonHardenedPaths, sessionId)) as
+        unknown as Ecdsa2pKeyHandle[]);
+  }
+
+  /** Account node (xpub material) for `hardenedPath`; see HdAccountNode. */
+  async hdEcdsa2pAccountNode(
+    transport: DataTransport, partyIndex: number, partyNames: [string, string], keyset: HdEcdsa2pKeysetHandle,
+    hardenedPath: number[], sessionId: Uint8Array = new Uint8Array(0),
+  ): Promise<HdAccountNode> {
+    return this.withJob2p(transport, partyIndex, partyNames, "hdEcdsa2pAccountNode", (job) =>
+      this.hdAccountNode("ecdsa2p", job, keyset as unknown as number, hardenedPath, sessionId));
+  }
+
+  hdEcdsa2pKeysetInfo(keyset: HdEcdsa2pKeysetHandle): HdKeysetInfo {
+    return this.hdKeysetInfo("ecdsa2p", keyset as unknown as number);
+  }
+
+  serializeHdEcdsa2p(keyset: HdEcdsa2pKeysetHandle): Uint8Array[] {
+    return this.hdSerialize("ecdsa2p", keyset as unknown as number);
+  }
+
+  deserializeHdEcdsa2p(data: Uint8Array[]): HdEcdsa2pKeysetHandle {
+    return this.hdDeserialize("ecdsa2p", data) as HdEcdsa2pKeysetHandle;
+  }
+
+  freeHdEcdsa2p(keyset: HdEcdsa2pKeysetHandle): void {
+    this.hdFree("ecdsa2p", keyset as unknown as number);
+  }
+
+  // ---- EdDSA-2P keysets (Ed25519) -------------------------------------------
+
+  async hdEddsa2pDkg(
+    transport: DataTransport, partyIndex: number, partyNames: [string, string], curveCode: number,
+  ): Promise<HdEddsa2pKeysetHandle> {
+    return this.withJob2p(transport, partyIndex, partyNames, "hdEddsa2pDkg", async (job) =>
+      (await this.hdHandleOp(job, "mpc_hd_eddsa2p_dkg", "hdEddsa2pDkg", curveCode)) as HdEddsa2pKeysetHandle);
+  }
+
+  /** Turn an existing EdDSA-2P key (EcKey2pHandle, Ed25519) into an HD keyset; root public key unchanged. */
+  async hdEddsa2pFromKey(
+    transport: DataTransport, partyIndex: number, partyNames: [string, string], key: EcKey2pHandle,
+  ): Promise<HdEddsa2pKeysetHandle> {
+    return this.withJob2p(transport, partyIndex, partyNames, "hdEddsa2pFromKey", async (job) => {
+      const keyRef = this.refOf(key as unknown as number);
+      try {
+        return (await this.hdHandleOp(job, "mpc_hd_eddsa2p_from_key", "hdEddsa2pFromKey", keyRef)) as HdEddsa2pKeysetHandle;
+      } finally {
+        this.mod.free(keyRef);
+      }
+    });
+  }
+
+  async hdEddsa2pRefresh(
+    transport: DataTransport, partyIndex: number, partyNames: [string, string], keyset: HdEddsa2pKeysetHandle,
+  ): Promise<HdEddsa2pKeysetHandle> {
+    return this.withJob2p(transport, partyIndex, partyNames, "hdEddsa2pRefresh", async (job) => {
+      const ref = this.refOf(keyset as unknown as number);
+      try {
+        return (await this.hdHandleOp(job, "mpc_hd_eddsa2p_refresh", "hdEddsa2pRefresh", ref)) as HdEddsa2pKeysetHandle;
+      } finally {
+        this.mod.free(ref);
+      }
+    });
+  }
+
+  /** Derive EdDSA-2P keys (EcKey2pHandle; sign with schnorr2pEddsaSign). */
+  async hdEddsa2pDerive(
+    transport: DataTransport, partyIndex: number, partyNames: [string, string], keyset: HdEddsa2pKeysetHandle,
+    hardenedPath: number[], nonHardenedPaths: number[][], sessionId: Uint8Array = new Uint8Array(0),
+  ): Promise<EcKey2pHandle[]> {
+    return this.withJob2p(transport, partyIndex, partyNames, "hdEddsa2pDerive", async (job) =>
+      (await this.hdDerive("eddsa2p", job, keyset as unknown as number, hardenedPath, nonHardenedPaths, sessionId)) as
+        unknown as EcKey2pHandle[]);
+  }
+
+  /** Account node for Ed25519 (non-standard; only for use with this library). */
+  async hdEddsa2pAccountNode(
+    transport: DataTransport, partyIndex: number, partyNames: [string, string], keyset: HdEddsa2pKeysetHandle,
+    hardenedPath: number[], sessionId: Uint8Array = new Uint8Array(0),
+  ): Promise<HdAccountNode> {
+    return this.withJob2p(transport, partyIndex, partyNames, "hdEddsa2pAccountNode", (job) =>
+      this.hdAccountNode("eddsa2p", job, keyset as unknown as number, hardenedPath, sessionId));
+  }
+
+  hdEddsa2pKeysetInfo(keyset: HdEddsa2pKeysetHandle): HdKeysetInfo {
+    return this.hdKeysetInfo("eddsa2p", keyset as unknown as number);
+  }
+
+  serializeHdEddsa2p(keyset: HdEddsa2pKeysetHandle): Uint8Array[] {
+    return this.hdSerialize("eddsa2p", keyset as unknown as number);
+  }
+
+  deserializeHdEddsa2p(data: Uint8Array[]): HdEddsa2pKeysetHandle {
+    return this.hdDeserialize("eddsa2p", data) as HdEddsa2pKeysetHandle;
+  }
+
+  freeHdEddsa2p(keyset: HdEddsa2pKeysetHandle): void {
+    this.hdFree("eddsa2p", keyset as unknown as number);
   }
 }

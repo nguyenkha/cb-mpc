@@ -77,6 +77,8 @@ link_openssl(cbmpc)
 
 # Export list — make C ABI symbols visible despite -fvisibility=hidden
 set(EXPORTS_FILE "${CMAKE_CURRENT_LIST_DIR}/exports.txt")
+# Relink when the export list changes (the linker reads it, CMake does not track it).
+set_property(TARGET cbmpc APPEND PROPERTY LINK_DEPENDS "${EXPORTS_FILE}")
 
 # Set output name and platform-specific settings
 if(IS_MACOS)

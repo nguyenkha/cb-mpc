@@ -1172,3 +1172,6 @@ int mpc_ac_key_info(cmem_t key_blob, cmem_t* public_key, cmem_t* public_share) {
     return 0;
   });
 }
+
+// HD keysets (fork-owned extension, kept in its own file).
+#include "hd_keyset.inc"

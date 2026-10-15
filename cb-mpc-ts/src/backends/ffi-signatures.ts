@@ -131,6 +131,30 @@ export const FFI_SIGNATURES: Record<string, FfiSignature> = {
 
   // Agree random
   mpc_agree_random: sig("i32", "ptr", "i32", "ptr"),
+
+  // HD keysets (capi/hd_keyset.h)
+  mpc_hd_ecdsa2p_dkg: sig("i32", "ptr", "i32", "ptr"),
+  mpc_hd_ecdsa2p_from_key: sig("i32", "ptr", "ptr", "ptr"),
+  mpc_hd_ecdsa2p_refresh: sig("i32", "ptr", "ptr", "ptr"),
+  mpc_hd_ecdsa2p_derive: sig("i32", "ptr", "ptr", "ptr", "ptr", "ptr", "ptr", "i32"),
+  mpc_hd_ecdsa2p_account_node: sig("i32", "ptr", "ptr", "ptr", "ptr", "ptr", "ptr"),
+  mpc_hd_ecdsa2p_get_Q: sig("i32", "ptr", "ptr"),
+  mpc_hd_ecdsa2p_get_role_index: sig("i32", "ptr"),
+  mpc_hd_ecdsa2p_get_curve_code: sig("i32", "ptr"),
+  serialize_mpc_hd_ecdsa2p: sig("i32", "ptr", "ptr"),
+  deserialize_mpc_hd_ecdsa2p: sig("i32", "ptr", "ptr"),
+  free_mpc_hd_ecdsa2p: sig("void", "ptr"),
+  mpc_hd_eddsa2p_dkg: sig("i32", "ptr", "i32", "ptr"),
+  mpc_hd_eddsa2p_from_key: sig("i32", "ptr", "ptr", "ptr"),
+  mpc_hd_eddsa2p_refresh: sig("i32", "ptr", "ptr", "ptr"),
+  mpc_hd_eddsa2p_derive: sig("i32", "ptr", "ptr", "ptr", "ptr", "ptr", "ptr", "i32"),
+  mpc_hd_eddsa2p_account_node: sig("i32", "ptr", "ptr", "ptr", "ptr", "ptr", "ptr"),
+  mpc_hd_eddsa2p_get_Q: sig("i32", "ptr", "ptr"),
+  mpc_hd_eddsa2p_get_role_index: sig("i32", "ptr"),
+  mpc_hd_eddsa2p_get_curve_code: sig("i32", "ptr"),
+  serialize_mpc_hd_eddsa2p: sig("i32", "ptr", "ptr"),
+  deserialize_mpc_hd_eddsa2p: sig("i32", "ptr", "ptr"),
+  free_mpc_hd_eddsa2p: sig("void", "ptr"),
 };
 
 /** C type used for an FfiType in koffi prototypes (pointers as intptr_t so JS numbers work). */

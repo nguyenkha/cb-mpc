@@ -210,6 +210,29 @@ set(EXPORTED_FUNCTIONS
   "_zk_dl_verify"
   # Agree random
   "_mpc_agree_random"
+  # HD keysets
+  "_mpc_hd_ecdsa2p_dkg"
+  "_mpc_hd_ecdsa2p_from_key"
+  "_mpc_hd_ecdsa2p_refresh"
+  "_mpc_hd_ecdsa2p_derive"
+  "_mpc_hd_ecdsa2p_account_node"
+  "_mpc_hd_ecdsa2p_get_Q"
+  "_mpc_hd_ecdsa2p_get_role_index"
+  "_mpc_hd_ecdsa2p_get_curve_code"
+  "_serialize_mpc_hd_ecdsa2p"
+  "_deserialize_mpc_hd_ecdsa2p"
+  "_free_mpc_hd_ecdsa2p"
+  "_mpc_hd_eddsa2p_dkg"
+  "_mpc_hd_eddsa2p_from_key"
+  "_mpc_hd_eddsa2p_refresh"
+  "_mpc_hd_eddsa2p_derive"
+  "_mpc_hd_eddsa2p_account_node"
+  "_mpc_hd_eddsa2p_get_Q"
+  "_mpc_hd_eddsa2p_get_role_index"
+  "_mpc_hd_eddsa2p_get_curve_code"
+  "_serialize_mpc_hd_eddsa2p"
+  "_deserialize_mpc_hd_eddsa2p"
+  "_free_mpc_hd_eddsa2p"
 )
 
 list(JOIN EXPORTED_FUNCTIONS "," EXPORTED_FUNCTIONS_STR)

@@ -200,3 +200,38 @@ export interface CbMpcWasmModule {
   // Transport callback registry (set up by our wrapper)
   _transportCallbacks: Record<number, DataTransport>;
 }
+
+// ---------------------------------------------------------------------------
+// HD keysets (2-party)
+// ---------------------------------------------------------------------------
+
+/** Opaque pointer to a two-party ECDSA HD keyset (signing key + VRF key shares). */
+export type HdEcdsa2pKeysetHandle = number & { readonly __brand: "HdEcdsa2pKeysetHandle" };
+
+/** Opaque pointer to a two-party EdDSA (Ed25519) HD keyset. */
+export type HdEddsa2pKeysetHandle = number & { readonly __brand: "HdEddsa2pKeysetHandle" };
+
+/** HD keyset information. */
+export interface HdKeysetInfo {
+  /** Party role index (0 or 1). */
+  roleIndex: number;
+  /** OpenSSL NID for the curve. */
+  curveCode: number;
+  /** Root public key Q (SEC1 uncompressed, same encoding as other key infos). */
+  publicKey: Uint8Array;
+}
+
+/**
+ * Account node after the hardened derivation step.
+ *
+ * For secp256k1 this is a BIP32 extended public key: any BIP32 library given
+ * `publicKey` + `chainCode` derives the same non-hardened children
+ * (e.g. `change/index`) as `hdEcdsa2pDerive`. For Ed25519 there is no
+ * standard; the node is only meaningful with this library.
+ */
+export interface HdAccountNode {
+  /** Compressed public key of the node (33 bytes for secp256k1 / P-256). */
+  publicKey: Uint8Array;
+  /** 32-byte chain code. */
+  chainCode: Uint8Array;
+}
