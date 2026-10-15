@@ -588,3 +588,42 @@ TYPED_TEST(ApiReshareAc, CallerSidIsNotCheckedForFreshness) {
     for (auto rv : rvs) EXPECT_EQ(rv, SUCCESS) << "run " << run;
   }
 }
+
+// Runs refresh_ac over `parties` with the given blobs and returns the per-party errors.
+template <typename Api>
+std::vector<error_t> refresh_rvs(const names_t& parties, const keys_t& keys, const access_structure_t& ac) {
+  net_t net(static_cast<int>(parties.size()));
+  std::vector<buf_t> fresh(parties.size());
+  return net.run([&](int i, data_transport_i& t) {
+    job_mp_t job{static_cast<party_idx_t>(i), parties, t};
+    buf_t sid;
+    return Api::refresh_ac(job, sid, keys.at(std::string(parties[size_t(i)])), ac, parties, fresh[size_t(i)]);
+  });
+}
+
+// Review P9: refresh must bind the key being refreshed. A stale blob from the previous generation (e.g. a restored
+// server backup after a lost-device reshare), or a blob of another key, must make every party abort instead of
+// silently corrupting shares and bringing a revoked device back into a quorum.
+TYPED_TEST(ApiReshareAc, RefreshRejectsMixedGenerationsAndKeys) {
+  using Api = TypeParam;
+  buf_t Q;
+  const keys_t g0 = dkg_2of3<Api>(Q);
+  keys_t g1;
+  const names_t pair = {kMac, kServer};
+  for (auto rv : reshare<Api>(kAll, pair, additive_shares<Api>(g0, pair), Q, kTwoOfThree, g1)) ASSERT_EQ(rv, SUCCESS);
+
+  // Old device + stale server (gen0) with the gen1 backup.
+  const keys_t stale = {{"iphone", g0.at("iphone")}, {"mac", g1.at("mac")}, {"server", g0.at("server")}};
+  for (auto rv : refresh_rvs<Api>(kAll, stale, kTwoOfThree)) EXPECT_NE(rv, SUCCESS);
+  // Only the device is stale.
+  const keys_t one_stale = {{"iphone", g0.at("iphone")}, {"mac", g1.at("mac")}, {"server", g1.at("server")}};
+  for (auto rv : refresh_rvs<Api>(kAll, one_stale, kTwoOfThree)) EXPECT_NE(rv, SUCCESS);
+  // A blob of another key.
+  buf_t other_Q;
+  const keys_t other = dkg_2of3<Api>(other_Q);
+  const keys_t foreign = {{"iphone", other.at("iphone")}, {"mac", g1.at("mac")}, {"server", g1.at("server")}};
+  for (auto rv : refresh_rvs<Api>(kAll, foreign, kTwoOfThree)) EXPECT_NE(rv, SUCCESS);
+  // The consistent generation still refreshes and signs.
+  const keys_t fresh = refresh_all<Api>(kAll, g1, kTwoOfThree);
+  expect_every_pair_signs<Api>(kAll, fresh, kTwoOfThree, Q);
+}
