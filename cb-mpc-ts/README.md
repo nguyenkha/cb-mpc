@@ -210,7 +210,16 @@ Notes:
 - **Resharing does not revoke old shares.** Any old qualifying set still holds the same key. A malicious dealer can
   make one party abort while others succeed: treat the new generation as live only after every party reported
   success, then delete old blobs and 2P keys and run `refreshAc`.
-- The transport must be authenticated and encrypted end to end: dealers send each party its share directly.
+- **Take the new structure, the dealer list and which device/person holds each name from your own record** too. The
+  protocol only checks that all parties agree; a coordinator that gives everyone a structure where it holds a
+  qualifying set of names gets the key.
+- The transport must be authenticated and encrypted end to end: dealers send each party its share in the clear inside
+  the protocol messages. A relay run by another party (e.g. the server relaying device <-> backup traffic) must not be
+  able to read them: with threshold 2, one intercepted share plus its own gives it the dealer's additive share. The
+  same holds for `dkgAc` and `refreshAc`.
+- Leave `sid` empty so a fresh one is derived; a caller-supplied sid is not checked for freshness.
+- Run one protocol at a time per `CbMpc` instance (Asyncify); a second concurrent call is rejected. Use one instance
+  per session.
 
 Measured over a real relay: `scripts/relay-bench/` (see the comments there for setup).
 
