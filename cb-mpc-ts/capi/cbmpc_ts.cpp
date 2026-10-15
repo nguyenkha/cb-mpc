@@ -72,7 +72,7 @@ int cmems_total_size(const cmems_t& cmems) {
   return total;
 }
 
-// Malformed cmems (see cmems_total_size) yield an empty vector, which every caller rejects as a count mismatch.
+// Malformed cmems (see cmems_total_size) yield an empty vector, as if no items were given.
 std::vector<buf_t> bufs_from_cmems(cmems_t cmems) {
   std::vector<buf_t> out;
   if (cmems.count <= 0 || cmems_total_size(cmems) < 0) return out;
@@ -196,7 +196,8 @@ class callback_transport_t : public coinbase::api::data_transport_i {
     cmems_t cmsgs{0, nullptr, nullptr};
     int rv = callbacks_.receive_all_fun(ctx_, c_senders.data(), n, &cmsgs);
     if (!rv && cmsgs.count != n) rv = NETWORK_ERROR;
-    const int total = cmems_total_size(cmsgs);
+    // Sizes are only trusted from a successful callback with the expected count.
+    const int total = rv ? -1 : cmems_total_size(cmsgs);
     if (!rv && total < 0) rv = NETWORK_ERROR;
     if (!rv) msgs = bufs_from_cmems(cmsgs);
     wipe_and_free(cmsgs.data, total);

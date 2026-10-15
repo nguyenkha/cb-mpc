@@ -219,7 +219,10 @@ Notes:
   same holds for `dkgAc` and `refreshAc`.
 - Leave `sid` empty so a fresh one is derived; a caller-supplied sid is not checked for freshness.
 - Run one protocol at a time per `CbMpc` instance (Asyncify); a second concurrent call is rejected. Use one instance
-  per session.
+  per session. A protocol whose transport never settles keeps its instance busy; make `receive` reject on abort or
+  timeout.
+- `refreshAc` now binds the key being refreshed (public key and public shares): every party must run this version
+  or later, otherwise refresh aborts with `h_consistency mismatch`.
 
 Measured over a real relay: `scripts/relay-bench/` (see the comments there for setup).
 
