@@ -550,3 +550,41 @@ TYPED_TEST(ApiReshareAc, BystanderPartyRejected) {
     EXPECT_NE(rv, SUCCESS);
   EXPECT_TRUE(g1.empty());
 }
+
+// Review P9 (contract): the library cannot tell who runs a leaf. If the coordinator hands every honest party the
+// same structure in which it controls a qualifying set ("server" and "server-b"), the reshare succeeds and the
+// server alone can sign. Callers must pin the structure and the name -> holder mapping from their own record.
+TYPED_TEST(ApiReshareAc, CoordinatorChosenStructureIsTrustedAsIs) {
+  using Api = TypeParam;
+  buf_t Q;
+  const keys_t xs = two_party_shares<Api>(Q);
+  const std::string_view kServerB = "server-b";
+  const names_t job_names = {kIphone, kServer, kServerB};
+  const access_structure_t rigged = threshold_of(2, job_names);
+  keys_t g1;
+  for (auto rv : reshare<Api>(job_names, {kIphone, kServer}, xs, Q, rigged, g1)) ASSERT_EQ(rv, SUCCESS);
+  EXPECT_TRUE(signs<Api>({kServer, kServerB}, g1, rigged, Q));
+}
+
+// Review P9 (contract): a caller-supplied sid is used as given; nothing checks it is fresh. Two runs with the same
+// sid both succeed, so freshness is the caller's job (pass an empty sid to let the protocol derive one).
+TYPED_TEST(ApiReshareAc, CallerSidIsNotCheckedForFreshness) {
+  using Api = TypeParam;
+  buf_t Q;
+  const keys_t g0 = dkg_2of3<Api>(Q);
+  const names_t pair = {kMac, kServer};
+  const keys_t xs = additive_shares<Api>(g0, pair);
+  const buf_t fixed_sid = msg32();
+  for (int run = 0; run < 2; run++) {
+    net_t net(3);
+    std::vector<buf_t> blobs(3);
+    auto rvs = net.run([&](int i, data_transport_i& t) {
+      job_mp_t job{static_cast<party_idx_t>(i), kAll, t};
+      buf_t sid = fixed_sid;
+      const auto it = xs.find(std::string(kAll[size_t(i)]));
+      const mem_t x = it == xs.end() ? mem_t() : mem_t(it->second);
+      return Api::reshare(job, sid, Q, pair, x, kTwoOfThree, blobs[size_t(i)]);
+    });
+    for (auto rv : rvs) EXPECT_EQ(rv, SUCCESS) << "run " << run;
+  }
+}
