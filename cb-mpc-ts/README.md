@@ -4,7 +4,7 @@ TypeScript wrapper for the [cb-mpc](https://github.com/coinbase/cb-mpc) cryptogr
 
 | cb-mpc (npm) | Based on coinbase/cb-mpc |
 |---|---|
-| 0.3.x | [v0.2.2](https://github.com/coinbase/cb-mpc/releases/tag/v0.2.2) + [coinbase/cb-mpc#137](https://github.com/coinbase/cb-mpc/pull/137) |
+| 0.3.x – 0.5.x | [v0.2.2](https://github.com/coinbase/cb-mpc/releases/tag/v0.2.2) + [coinbase/cb-mpc#137](https://github.com/coinbase/cb-mpc/pull/137) |
 | 0.1.x | v0.1.0 + 42 commits (before v0.1.1) |
 
 Supports three backends:
