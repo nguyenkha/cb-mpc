@@ -1,4 +1,4 @@
-FROM public.ecr.aws/docker/library/golang:1.24.6-bookworm
+FROM mirror.gcr.io/library/golang:1.24.6-bookworm@sha256:ab1d1823abb55a9504d2e3e003b75b36dbeb1cbcc4c92593d85a84ee46becc6c
 
 LABEL description="Build environment for MPC project with LLVM and tweaked OpenSSL"
 LABEL version="1.0"
