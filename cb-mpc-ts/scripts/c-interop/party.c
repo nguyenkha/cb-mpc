@@ -7,13 +7,17 @@
 //   stdout : [to][len][bytes]     message to party `to`
 //            [-1][len][bytes]     result: public key (compressed), then signature
 //
-// Usage: party <ecdsa2p|eddsa2p|ecdsamp|eddsamp> <self> <n> <curve> <msg-hex>
+// Usage: party <ecdsa2p|eddsa2p|ecdsamp|eddsamp|ecdsaac|eddsaac> <self> <n> <curve> <msg-hex>
+//
+// ecdsaac / eddsaac (n = 3, parties iphone, mac, server): dkg_ac 2-of-3, then mac + server reshare a new
+// generation for all three (lost-device flow), then all three sign_ac. Result frames: public key, signature.
 
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include <cbmpc/c_api/access_structure.h>
 #include <cbmpc/c_api/common.h>
 #include <cbmpc/c_api/ecdsa_2p.h>
 #include <cbmpc/c_api/ecdsa_mp.h>
@@ -103,9 +107,47 @@ static cmem_t from_hex(const char* hex) {
   return m;
 }
 
+// THRESHOLD[2](iphone, mac, server); dkg_ac, reshare (dealers mac + server), sign_ac with all three.
+static void run_ac(int eddsa, int self, cbmpc_curve_id_t curve, cmem_t msg, cmem_t* pub, cmem_t* sig) {
+  static const char* names[3] = {"iphone", "mac", "server"};
+  static const char* dealers[2] = {"mac", "server"};
+  static const int32_t child_indices[] = {1, 2, 3};
+  static const cbmpc_access_structure_node_t nodes[] = {
+      {CBMPC_ACCESS_STRUCTURE_NODE_THRESHOLD, NULL, 2, 0, 3},
+      {CBMPC_ACCESS_STRUCTURE_NODE_LEAF, "iphone", 0, 0, 0},
+      {CBMPC_ACCESS_STRUCTURE_NODE_LEAF, "mac", 0, 0, 0},
+      {CBMPC_ACCESS_STRUCTURE_NODE_LEAF, "server", 0, 0, 0},
+  };
+  const cbmpc_access_structure_t ac = {nodes, 4, child_indices, 3, 0};
+  cbmpc_transport_t transport = {NULL, t_send, t_receive, t_receive_all, NULL};
+  cbmpc_mp_job_t job = {self, names, 3, &transport};
+  cmem_t none = {NULL, 0}, g0 = {0}, g1 = {0}, sid = {0}, x = {0};
+  cbmpc_error_t rv;
+
+  rv = eddsa ? cbmpc_eddsa_mp_dkg_ac(&job, curve, none, &ac, names, 3, &g0, &sid)
+             : cbmpc_ecdsa_mp_dkg_ac(&job, curve, none, &ac, names, 3, &g0, &sid);
+  if (rv) die("dkg_ac", rv);
+  rv = eddsa ? cbmpc_eddsa_mp_get_public_key_compressed(g0, pub) : cbmpc_ecdsa_mp_get_public_key_compressed(g0, pub);
+  if (rv) die("get_public_key", rv);
+  if (self != 0) {
+    rv = eddsa ? cbmpc_eddsa_mp_ac_key_to_additive_share(g0, &ac, dealers, 2, &x)
+               : cbmpc_ecdsa_mp_ac_key_to_additive_share(g0, &ac, dealers, 2, &x);
+    if (rv) die("ac_key_to_additive_share", rv);
+  }
+  rv = eddsa ? cbmpc_eddsa_mp_reshare_from_additive(&job, curve, none, *pub, dealers, 2, x, &ac, NULL, &g1)
+             : cbmpc_ecdsa_mp_reshare_from_additive(&job, curve, none, *pub, dealers, 2, x, &ac, NULL, &g1);
+  if (rv) die("reshare_from_additive", rv);
+  rv = eddsa ? cbmpc_eddsa_mp_sign_ac(&job, g1, &ac, msg, 0, sig) : cbmpc_ecdsa_mp_sign_ac(&job, g1, &ac, msg, 0, sig);
+  if (rv) die("sign_ac", rv);
+  cbmpc_cmem_free(x);
+  cbmpc_cmem_free(g0);
+  cbmpc_cmem_free(g1);
+  cbmpc_cmem_free(sid);
+}
+
 int main(int argc, char** argv) {
   if (argc != 6) {
-    fprintf(stderr, "usage: party <ecdsa2p|eddsa2p|ecdsamp|eddsamp> <self> <n> <curve> <msg-hex>\n");
+    fprintf(stderr, "usage: party <ecdsa2p|eddsa2p|ecdsamp|eddsamp|ecdsaac|eddsaac> <self> <n> <curve> <msg-hex>\n");
     return 2;
   }
   const char* proto = argv[1];
@@ -144,6 +186,8 @@ int main(int argc, char** argv) {
     if ((rv = cbmpc_eddsa_mp_dkg_additive(&jobm, curve, &key, &sid))) die("eddsa_mp_dkg", rv);
     if ((rv = cbmpc_eddsa_mp_get_public_key_compressed(key, &pub))) die("get_public_key", rv);
     if ((rv = cbmpc_eddsa_mp_sign_additive(&jobm, key, msg, 0, &sig))) die("eddsa_mp_sign", rv);
+  } else if (!strcmp(proto, "ecdsaac") || !strcmp(proto, "eddsaac")) {
+    run_ac(proto[0] == 'e' && proto[1] == 'd', self, curve, msg, &pub, &sig);
   } else {
     fprintf(stderr, "unknown protocol %s\n", proto);
     return 2;

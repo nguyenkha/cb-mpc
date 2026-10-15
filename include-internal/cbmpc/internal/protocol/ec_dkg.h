@@ -52,6 +52,10 @@ struct key_share_2p_t {
   static error_t refresh(job_2p_t& job, const key_share_2p_t& key, key_share_2p_t& new_key);
 };
 
+// Fork addition: checks that public node shares (as from `ac_t::share_with_internals`) form one consistent sharing
+// over the whole tree below `node`. All node names of the tree must be present in `pub`.
+error_t verify_ac_pub_tree(const crypto::ss::node_t* node, const crypto::ss::ac_internal_pub_shares_t& pub);
+
 struct key_share_mp_t {
   bn_t x_share;
   ecc_point_t Q;
@@ -105,6 +109,18 @@ struct key_share_mp_t {
    */
   static error_t refresh_ac(job_mp_t& job, const ecurve_t& curve, buf_t& sid, const crypto::ss::ac_t,
                             const party_set_t& quorum_party_set, key_share_mp_t& key, key_share_mp_t& new_key);
+
+  /**
+   * Fork addition (not in upstream specs): reshare a key with known public key `Q` from the additive shares held by
+   * `dealer_party_set` to the access structure `new_ac`, keeping `Q`.
+   * - All job parties must be online; each is a dealer, a leaf of `new_ac`, or both.
+   * - Dealers pass their additive share in `additive_share` (the dealers' shares must sum to the private key);
+   *   it is ignored for other parties.
+   * - On success `has_new_key` is true iff this party is a leaf of `new_ac`, and `new_key` holds its new share.
+   */
+  static error_t reshare_ac(job_mp_t& job, const ecurve_t& curve, buf_t& sid, const crypto::ss::ac_t new_ac,
+                            const party_set_t& dealer_party_set, const ecc_point_t& Q, const bn_t& additive_share,
+                            key_share_mp_t& new_key, bool& has_new_key);
 
  private:
   static error_t dkg_or_refresh_ac(job_mp_t& job, const ecurve_t& curve, buf_t& sid, const crypto::ss::ac_t,

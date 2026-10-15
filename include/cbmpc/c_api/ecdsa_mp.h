@@ -162,6 +162,40 @@ cbmpc_error_t cbmpc_ecdsa_mp_detach_private_scalar(cmem_t key_blob, cmem_t* out_
 cbmpc_error_t cbmpc_ecdsa_mp_attach_private_scalar(cmem_t public_key_blob, cmem_t private_scalar_fixed,
                                                    cmem_t public_share_compressed, cmem_t* out_key_blob);
 
+// ---------------------------------------------------------------------------
+// Resharing (fork addition)
+// ---------------------------------------------------------------------------
+
+// Reshare a key from an additive sharing held by `dealer_party_names` to `new_access_structure`, keeping the public
+// key `public_key_compressed`. See `coinbase::api::ecdsa_mp::reshare_from_additive` for the protocol semantics:
+// - All parties in `job->party_names` must be online; each is a dealer, a leaf of the new structure, or both.
+// - Dealers pass their additive share (big-endian, at most 64 bytes, reduced mod the curve order); non-dealers pass
+//   `{NULL, 0}`.
+// - Every party MUST take `public_key_compressed` from its own trusted record, never from a peer or relay message.
+// - Resharing does not revoke the old shares. Treat the new generation as live only after every party reported
+//   success, then delete the old shares.
+// - For `cbmpc_ecdsa_mp_ac_key_to_additive_share`, pass a minimal qualifying quorum (zero-weight members are rejected).
+//
+// Ownership:
+// - On success, parties in the new structure get `out_new_ac_key_blob->data` allocated by the library (free with
+//   `cbmpc_cmem_free`); dealers outside it get `{NULL, 0}`. If `sid_out` is non-NULL it receives the session id
+//   used (free with `cbmpc_cmem_free`).
+// - On failure, `*out_new_ac_key_blob` (and `*sid_out` when provided) are set to `{NULL, 0}`.
+cbmpc_error_t cbmpc_ecdsa_mp_reshare_from_additive(const cbmpc_mp_job_t* job, cbmpc_curve_id_t curve, cmem_t sid_in,
+                                                   cmem_t public_key_compressed, const char* const* dealer_party_names,
+                                                   int dealer_party_names_count, cmem_t additive_share,
+                                                   const cbmpc_access_structure_t* new_access_structure,
+                                                   cmem_t* sid_out, cmem_t* out_new_ac_key_blob);
+
+// Convert this party's access-structure key share into its additive share for `quorum_party_names`
+// (fixed-length big-endian, curve order size). Private key material: free with `cbmpc_cmem_free` (it wipes).
+//
+// Ownership: on success `out_additive_share->data` is allocated by the library; on failure it is `{NULL, 0}`.
+cbmpc_error_t cbmpc_ecdsa_mp_ac_key_to_additive_share(cmem_t ac_key_blob,
+                                                      const cbmpc_access_structure_t* access_structure,
+                                                      const char* const* quorum_party_names,
+                                                      int quorum_party_names_count, cmem_t* out_additive_share);
+
 #ifdef __cplusplus
 }
 #endif

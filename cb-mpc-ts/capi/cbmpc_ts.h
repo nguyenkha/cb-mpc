@@ -204,6 +204,25 @@ int pve_batch_verify(int curve_code, cmem_t ek, cmem_t ciphertext, cmems_t Qs_co
 // Does not verify the ciphertext first; call pve_batch_verify when that matters.
 int pve_batch_decrypt(int curve_code, cmem_t dk, cmem_t ek, cmem_t ciphertext, cmem_t label, cmems_t* xs);
 
+// ---------------------------------------------------------------------------
+// Access-structure (AC) keys (fork addition)
+// ---------------------------------------------------------------------------
+// Key blobs are the library's v2 AC blobs. ECDSA-MP on secp256k1 / P-256, EdDSA-MP on Ed25519 (picked from
+// `curve_code` or from the blob). `access_structure` uses the encoding in access_structure_codec.h; party-name lists
+// are cmems_t of UTF-8 names. Returned buffers are malloc'ed; additive shares and key blobs are secret.
+
+int mpc_ac_dkg(job_mp_ref* job, int curve_code, cmem_t access_structure, cmems_t quorum_names, cmem_t* key_blob);
+int mpc_ac_refresh(job_mp_ref* job, cmem_t key_blob, cmem_t access_structure, cmems_t quorum_names,
+                   cmem_t* new_key_blob);
+int mpc_ac_sign(job_mp_ref* job, cmem_t key_blob, cmem_t access_structure, cmem_t msg, int sig_receiver, cmem_t* sig);
+// `public_key`: compressed, or SEC1 uncompressed as returned by the 2P key getters. Non-dealers pass an empty
+// `additive_share`; parties outside `new_access_structure` get an empty `new_key_blob`.
+int mpc_ac_reshare_from_additive(job_mp_ref* job, int curve_code, cmem_t public_key, cmems_t dealer_names,
+                                 cmem_t additive_share, cmem_t new_access_structure, cmem_t* new_key_blob);
+int mpc_ac_to_additive_share(cmem_t key_blob, cmem_t access_structure, cmems_t quorum_names, cmem_t* additive_share);
+// Compressed public key and this party's compressed public share.
+int mpc_ac_key_info(cmem_t key_blob, cmem_t* public_key, cmem_t* public_share);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

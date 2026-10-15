@@ -40,10 +40,12 @@ file(GLOB PROTO_SRCS   ${SRC_DIR}/cbmpc/protocol/*.cpp)
 
 set(BINDING_SRCS ${TS_DIR}/binding.cpp)
 
-# Public PVE API used by the PVE bindings
+# Public API used by the PVE and access-structure bindings
 set(API_SRCS
   ${SRC_DIR}/cbmpc/api/pve_base_pke.cpp
   ${SRC_DIR}/cbmpc/api/pve_batch_single_recipient.cpp
+  ${SRC_DIR}/cbmpc/api/ecdsa_mp.cpp
+  ${SRC_DIR}/cbmpc/api/eddsa_mp.cpp
 )
 
 # ------------- Build target ----------------------------------------------------

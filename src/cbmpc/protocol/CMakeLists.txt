@@ -16,6 +16,7 @@ target_sources(cbmpc_protocol  PRIVATE
   pve_ac.cpp
 
   ec_dkg.cpp
+  ec_dkg_reshare.cpp
   ecdsa_2p.cpp
   ecdsa_mp.cpp
   schnorr_2p.cpp

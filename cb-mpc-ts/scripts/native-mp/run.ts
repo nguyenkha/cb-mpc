@@ -40,6 +40,11 @@ function ed25519Verify(sec1: Uint8Array, msg: Uint8Array, sig: Uint8Array): bool
   return nodeVerify(null, msg, key, sig);
 }
 
+function ed25519VerifyCompressed(pub: Uint8Array, msg: Uint8Array, sig: Uint8Array): boolean {
+  const key = createPublicKey({ key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), pub]), format: "der", type: "spki" });
+  return nodeVerify(null, msg, key, sig);
+}
+
 const results: [string, boolean, string?][] = [];
 async function check(name: string, fn: () => Promise<void>) {
   const t = Date.now();
@@ -83,6 +88,31 @@ for (const backend of ["bun", "koffi"]) {
     const rs = await runParties(3, backend, { kind: "mp", curve: M.NID_ED25519, msg: text });
     if (!ed25519Verify(rs[0].pub, text, rs[0].sig)) throw new Error("sig invalid");
   });
+  for (const [cname, curve] of [["secp256k1", M.NID_secp256k1], ["Ed25519", M.NID_ED25519]] as const) {
+    await check(`${backend}: AC ${cname} dkg 2-of-3, lost-device reshare, every pair signs, refresh`, async () => {
+      const ALL = ["iphone", "mac", "server"];
+      const ac = M.thresholdOf(2, ALL);
+      const ac2 = (op: string, names: string[], extra: any = {}) =>
+        runParties(names.length, backend, { kind: "ac", op, names, curve, ac, msg: curve === M.NID_ED25519 ? text : hash, ...extra });
+      const byName = (names: string[], rs: any[], f = "blob") => Object.fromEntries(names.map((n, i) => [n, rs[i][f]]));
+      const g0 = byName(ALL, await ac2("dkg", ALL));
+      const pub = wasm.acKeyInfo(g0.iphone).publicKey;
+      const g1rs = await ac2("reshare", ALL, { blobs: g0, oldAc: ac, dealers: ["mac", "server"], pub });
+      if (!g1rs.every((r: any) => hex(r.pub) === hex(pub))) throw new Error("public key changed");
+      let g1 = byName(ALL, g1rs);
+      const signsWith = async (keys: any, pair: string[]) => {
+        const [r0] = await ac2("sign", pair, { blobs: keys });
+        return curve === M.NID_ED25519 ? ed25519VerifyCompressed(pub, text, r0.sig) : wasm.verifyDer(curve, pub, hash, r0.sig);
+      };
+      for (const pair of [["iphone", "server"], ["mac", "server"], ["iphone", "mac"]])
+        if (!(await signsWith(g1, pair))) throw new Error(`${pair} did not sign`);
+      g1 = byName(ALL, await ac2("refresh", ALL, { blobs: g1 }));
+      if (!(await signsWith(g1, ["iphone", "mac"]))) throw new Error("no signature after refresh");
+      let mixedRejected = false;
+      try { mixedRejected = !(await signsWith({ iphone: g0.iphone, server: g1.server }, ["iphone", "server"])); } catch { mixedRejected = true; }
+      if (!mixedRejected) throw new Error("old iphone share signed with the new server share");
+    });
+  }
   await check(`${backend}: agreeRandom`, async () => {
     const [r0, r1] = await runParties(2, backend, { kind: "agree" });
     if (hex(r0.rand) !== hex(r1.rand) || r0.rand.length !== 32) throw new Error("outputs differ");

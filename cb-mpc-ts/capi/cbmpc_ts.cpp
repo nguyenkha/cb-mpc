@@ -7,9 +7,12 @@
 #include <string_view>
 #include <vector>
 
+#include <cbmpc/api/ecdsa_mp.h>
+#include <cbmpc/api/eddsa_mp.h>
 #include <cbmpc/api/pve_base_pke.h>
 #include <cbmpc/api/pve_batch_single_recipient.h>
 #include <cbmpc/core/buf.h>
+#include <cbmpc/internal/core/log.h>
 #include <cbmpc/internal/crypto/base.h>
 #include <cbmpc/internal/protocol/agree_random.h>
 #include <cbmpc/internal/protocol/ec_dkg.h>
@@ -19,6 +22,8 @@
 #include <cbmpc/internal/protocol/mpc_job.h>
 #include <cbmpc/internal/protocol/schnorr_2p.h>
 #include <cbmpc/internal/zk/zk_ec.h>
+
+#include "access_structure_codec.h"
 
 using namespace coinbase;
 using namespace coinbase::crypto;
@@ -177,6 +182,13 @@ class callback_transport_t : public coinbase::api::data_transport_i {
   void* const ctx_;
 };
 
+// Internal MP job that also hands out its transport, so the access-structure calls can build a public-API job.
+class ts_job_mp_t final : public job_mp_t {
+ public:
+  using job_mp_t::job_mp_t;
+  coinbase::api::data_transport_i* api_transport() const { return transport_raw; }
+};
+
 bool valid_callbacks(const data_transport_callbacks_t* cb) {
   return cb && cb->send_fun && cb->receive_fun && cb->receive_all_fun;
 }
@@ -306,8 +318,8 @@ job_mp_ref* new_job_mp(const data_transport_callbacks_t* callbacks, void* ctx, i
   try {
     auto transport = std::make_shared<callback_transport_t>(*callbacks, ctx);
     std::vector<pname_t> names(pnames, pnames + party_count);
-    auto job = std::make_unique<job_mp_t>(party_index, std::move(names), transport);
-    return new job_mp_ref{job.release()};
+    auto job = std::make_unique<ts_job_mp_t>(party_index, std::move(names), transport);
+    return new job_mp_ref{static_cast<job_mp_t*>(job.release())};
   } catch (const std::exception& e) {
     std::cerr << "new_job_mp: " << e.what() << std::endl;
     return nullptr;
@@ -316,7 +328,7 @@ job_mp_ref* new_job_mp(const data_transport_callbacks_t* callbacks, void* ctx, i
 
 void free_job_mp(job_mp_ref* ptr) {
   if (!ptr) return;
-  delete as<job_mp_t>(ptr->opaque);
+  delete static_cast<ts_job_mp_t*>(as<job_mp_t>(ptr->opaque));
   delete ptr;
 }
 
@@ -952,5 +964,183 @@ int pve_batch_decrypt(int curve_code, cmem_t dk, cmem_t ek, cmem_t ciphertext, c
     if (error_t rv = coinbase::api::pve::decrypt_batch(curve, view(dk), view(ek), view(ciphertext), view(label), out))
       return rv;
     return copy_to_cmems_rv(mems_view(out), xs);
+  });
+}
+
+// ===========================================================================
+// Access-structure (AC) keys: dkg / refresh / sign / reshare
+// ===========================================================================
+// Key blobs are the library's own v2 AC blobs (same bytes as the public C API), so a share made here can be used by
+// any other binding of the library. ECDSA-MP on secp256k1 / P-256, EdDSA-MP on Ed25519.
+
+namespace {
+
+struct api_job_t {
+  std::vector<std::string_view> names;
+  std::unique_ptr<coinbase::api::job_mp_t> job;
+};
+
+error_t to_api_job(job_mp_ref* j, api_job_t& out) {
+  job_mp_t* job = job_of(j);
+  if (!job) return E_BADARG;
+  auto* transport = static_cast<ts_job_mp_t*>(job)->api_transport();
+  if (!transport) return E_BADARG;
+  for (const auto& name : job->get_names()) out.names.emplace_back(name);
+  out.job.reset(new coinbase::api::job_mp_t{job->get_party_idx(), out.names, *transport});
+  return SUCCESS;
+}
+
+error_t decode_ac(cmem_t in, coinbase::api::access_structure_t& out) {
+  return cbmpc_ts::access_structure_decoder_t(view(in)).decode(out);
+}
+
+// Party names passed as cmems_t of UTF-8 strings; `storage` owns the bytes the views point into.
+std::vector<std::string_view> names_view(cmems_t names, std::vector<std::string>& storage) {
+  storage.clear();
+  for (const auto& b : bufs_from_cmems(names)) storage.emplace_back(reinterpret_cast<const char*>(b.data()), b.size());
+  return std::vector<std::string_view>(storage.begin(), storage.end());
+}
+
+bool blob_is_eddsa(mem_t blob) {
+  dylog_disable_scope_t quiet;  // an ECDSA blob failing this probe is expected, not an error to log
+  buf_t Q;
+  return coinbase::api::eddsa_mp::get_public_key_compressed(blob, Q) == SUCCESS;
+}
+
+// Accepts the library's compressed encoding or the SEC1 uncompressed 04||x||y form the 2P getters return
+// (for Ed25519, x and y are the big-endian affine coordinates). Returns the library's compressed encoding.
+error_t to_compressed_public_key(coinbase::api::curve_id cid, mem_t in, buf_t& out) {
+  const ecurve_t curve = cid == coinbase::api::curve_id::ed25519 ? curve_ed25519
+                         : cid == coinbase::api::curve_id::p256  ? curve_p256
+                                                                 : curve_secp256k1;
+  buf_t bin(in);
+  if (cid == coinbase::api::curve_id::ed25519 && in.size == 65 && in.data[0] == 0x04) {
+    bin = buf_t(32);
+    for (int i = 0; i < 32; i++) bin[i] = in.data[64 - i];  // y, little-endian
+    bin[31] = uint8_t((bin[31] & 0x7f) | ((in.data[32] & 1) << 7));  // sign of x
+  }
+  ecc_point_t Q;
+  if (error_t rv = Q.from_bin(curve, bin)) return rv;
+  if (curve.check(Q) || Q.is_infinity()) return E_FORMAT;
+  out = Q.to_compressed_bin();
+  return SUCCESS;
+}
+
+}  // namespace
+
+int mpc_ac_dkg(job_mp_ref* j, int curve_code, cmem_t access_structure, cmems_t quorum_names, cmem_t* key_blob) {
+  if (key_blob) *key_blob = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    coinbase::api::curve_id cid;
+    api_job_t aj;
+    coinbase::api::access_structure_t ac;
+    if (!key_blob || !pve_curve(curve_code, cid) || to_api_job(j, aj) || decode_ac(access_structure, ac))
+      return E_BADARG;
+    std::vector<std::string> storage;
+    const auto quorum = names_view(quorum_names, storage);
+    buf_t sid, out;
+    const error_t rv = cid == coinbase::api::curve_id::ed25519
+                           ? coinbase::api::eddsa_mp::dkg_ac(*aj.job, cid, sid, ac, quorum, out)
+                           : coinbase::api::ecdsa_mp::dkg_ac(*aj.job, cid, sid, ac, quorum, out);
+    if (rv) return rv;
+    return copy_to_cmem_rv(out, key_blob);
+  });
+}
+
+int mpc_ac_refresh(job_mp_ref* j, cmem_t key_blob, cmem_t access_structure, cmems_t quorum_names,
+                   cmem_t* new_key_blob) {
+  if (new_key_blob) *new_key_blob = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    api_job_t aj;
+    coinbase::api::access_structure_t ac;
+    if (!new_key_blob || to_api_job(j, aj) || decode_ac(access_structure, ac)) return E_BADARG;
+    std::vector<std::string> storage;
+    const auto quorum = names_view(quorum_names, storage);
+    buf_t sid, out;
+    const error_t rv = blob_is_eddsa(view(key_blob))
+                           ? coinbase::api::eddsa_mp::refresh_ac(*aj.job, sid, view(key_blob), ac, quorum, out)
+                           : coinbase::api::ecdsa_mp::refresh_ac(*aj.job, sid, view(key_blob), ac, quorum, out);
+    if (rv) return rv;
+    return copy_to_cmem_rv(out, new_key_blob);
+  });
+}
+
+int mpc_ac_sign(job_mp_ref* j, cmem_t key_blob, cmem_t access_structure, cmem_t msg, int sig_receiver, cmem_t* sig) {
+  if (sig) *sig = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    api_job_t aj;
+    coinbase::api::access_structure_t ac;
+    if (!sig || to_api_job(j, aj) || decode_ac(access_structure, ac)) return E_BADARG;
+    buf_t out;
+    const error_t rv =
+        blob_is_eddsa(view(key_blob))
+            ? coinbase::api::eddsa_mp::sign_ac(*aj.job, view(key_blob), ac, view(msg), sig_receiver, out)
+            : coinbase::api::ecdsa_mp::sign_ac(*aj.job, view(key_blob), ac, view(msg), sig_receiver, out);
+    if (rv) return rv;
+    return copy_to_cmem_rv(out, sig);
+  });
+}
+
+int mpc_ac_reshare_from_additive(job_mp_ref* j, int curve_code, cmem_t public_key, cmems_t dealer_names,
+                                 cmem_t additive_share, cmem_t new_access_structure, cmem_t* new_key_blob) {
+  if (new_key_blob) *new_key_blob = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    coinbase::api::curve_id cid;
+    api_job_t aj;
+    coinbase::api::access_structure_t ac;
+    if (!new_key_blob || !pve_curve(curve_code, cid) || to_api_job(j, aj) || decode_ac(new_access_structure, ac))
+      return E_BADARG;
+    buf_t Q;
+    if (error_t rv = to_compressed_public_key(cid, view(public_key), Q)) return rv;
+    std::vector<std::string> storage;
+    const auto dealers = names_view(dealer_names, storage);
+    buf_t sid, out;
+    const error_t rv =
+        cid == coinbase::api::curve_id::ed25519
+            ? coinbase::api::eddsa_mp::reshare_from_additive(*aj.job, cid, sid, Q, dealers, view(additive_share), ac,
+                                                             out)
+            : coinbase::api::ecdsa_mp::reshare_from_additive(*aj.job, cid, sid, Q, dealers, view(additive_share), ac,
+                                                             out);
+    if (rv) return rv;
+    return copy_to_cmem_rv(out, new_key_blob);
+  });
+}
+
+int mpc_ac_to_additive_share(cmem_t key_blob, cmem_t access_structure, cmems_t quorum_names, cmem_t* additive_share) {
+  if (additive_share) *additive_share = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    coinbase::api::access_structure_t ac;
+    if (!additive_share || decode_ac(access_structure, ac)) return E_BADARG;
+    std::vector<std::string> storage;
+    const auto quorum = names_view(quorum_names, storage);
+    buf_t x;
+    const error_t rv = blob_is_eddsa(view(key_blob))
+                           ? coinbase::api::eddsa_mp::ac_key_to_additive_share(view(key_blob), ac, quorum, x)
+                           : coinbase::api::ecdsa_mp::ac_key_to_additive_share(view(key_blob), ac, quorum, x);
+    if (rv) return rv;
+    return copy_to_cmem_rv(x, additive_share);
+  });
+}
+
+int mpc_ac_key_info(cmem_t key_blob, cmem_t* public_key, cmem_t* public_share) {
+  if (public_key) *public_key = cmem_t{nullptr, 0};
+  if (public_share) *public_share = cmem_t{nullptr, 0};
+  return guard_rv([&]() -> int {
+    if (!public_key || !public_share) return E_BADARG;
+    const bool eddsa = blob_is_eddsa(view(key_blob));
+    buf_t Q, Qi;
+    error_t rv = eddsa ? coinbase::api::eddsa_mp::get_public_key_compressed(view(key_blob), Q)
+                       : coinbase::api::ecdsa_mp::get_public_key_compressed(view(key_blob), Q);
+    if (rv) return rv;
+    rv = eddsa ? coinbase::api::eddsa_mp::get_public_share_compressed(view(key_blob), Qi)
+               : coinbase::api::ecdsa_mp::get_public_share_compressed(view(key_blob), Qi);
+    if (rv) return rv;
+    if (int r = copy_to_cmem_rv(Q, public_key)) return r;
+    if (int r = copy_to_cmem_rv(Qi, public_share)) {
+      std::free(public_key->data);
+      *public_key = cmem_t{nullptr, 0};
+      return r;
+    }
+    return 0;
   });
 }

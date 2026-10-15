@@ -54,10 +54,12 @@ file(GLOB PROTO_SRCS   ${SRC_DIR}/cbmpc/protocol/*.cpp)
 set(CAPI_DIR ${CMAKE_CURRENT_LIST_DIR}/capi)
 set(CAPI_SRCS ${CAPI_DIR}/cbmpc_ts.cpp)
 
-# Public PVE API used by the PVE bindings
+# Public API used by the PVE and access-structure bindings
 set(API_SRCS
   ${SRC_DIR}/cbmpc/api/pve_base_pke.cpp
   ${SRC_DIR}/cbmpc/api/pve_batch_single_recipient.cpp
+  ${SRC_DIR}/cbmpc/api/ecdsa_mp.cpp
+  ${SRC_DIR}/cbmpc/api/eddsa_mp.cpp
 )
 
 # WASM-specific binding
@@ -170,6 +172,13 @@ set(EXPORTED_FUNCTIONS
   "_wasm_pve_batch_encrypt"
   "_wasm_pve_batch_verify"
   "_wasm_pve_batch_decrypt"
+  # Access-structure keys
+  "_wasm_mpc_ac_dkg"
+  "_wasm_mpc_ac_refresh"
+  "_wasm_mpc_ac_sign"
+  "_wasm_mpc_ac_reshare_from_additive"
+  "_wasm_mpc_ac_to_additive_share"
+  "_wasm_mpc_ac_key_info"
   # EC Key MP
   "_mpc_eckey_mp_dkg"
   "_mpc_eckey_mp_refresh"

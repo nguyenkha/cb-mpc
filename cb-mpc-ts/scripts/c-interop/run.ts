@@ -112,6 +112,18 @@ async function runMixed(proto: string, n: number, cSeat: number, curve: number, 
       const sig = await mpc.schnorr2pEddsaSign(t, i, names, k, msg);
       return { idx: i, pub: mpc.ecKey2pInfo(k).publicKey, sig };
     }
+    if (proto.endsWith("ac")) {
+      // Same flow as run_ac in party.c: dkg 2-of-3, mac + server reshare, all three sign.
+      const acNames = ["iphone", "mac", "server"];
+      const ac = M.thresholdOf(2, acNames);
+      const dealers = ["mac", "server"];
+      const g0 = await mpc.dkgAc(t, i, acNames, curve, ac, acNames);
+      const pub = mpc.acKeyInfo(g0).publicKey;
+      const x = i === 0 ? null : mpc.acToAdditiveShare(g0, ac, dealers);
+      const g1 = await mpc.reshareFromAdditive(t, i, acNames, curve, pub, dealers, x, ac);
+      const sig = await mpc.signAc(t, i, acNames, g1, ac, msg, 0);
+      return { idx: i, pub, sig, compressed: true };
+    }
     const c = mpc.createCurve(curve);
     const k = await mpc.ecKeyMpDkg(t, n, i, names, c);
     const sig = proto === "ecdsamp" ? await mpc.ecdsaMpSign(t, n, i, names, k, msg, 0) : await mpc.eddsaMpSign(t, n, i, names, k, msg, 0);
@@ -150,6 +162,8 @@ const cases: [string, number, number, Uint8Array][] = [
   ["eddsa2p", 2, M.NID_ED25519, text],
   ["ecdsamp", 3, M.NID_secp256k1, hash],
   ["eddsamp", 3, M.NID_ED25519, text],
+  ["ecdsaac", 3, M.NID_secp256k1, hash],
+  ["eddsaac", 3, M.NID_ED25519, text],
 ];
 
 for (const [proto, n, curve, msg] of cases) {
@@ -158,12 +172,12 @@ for (const [proto, n, curve, msg] of cases) {
       const r = await runMixed(proto, n, cSeat, curve, msg);
       const jsPub: Uint8Array = r.js[0].pub;
       const ed = curve === M.NID_ED25519;
-      const jsPubC = ed ? ed25519Encode(jsPub) : compressSec1(jsPub);
+      const jsPubC = r.js[0].compressed ? jsPub : ed ? ed25519Encode(jsPub) : compressSec1(jsPub);
       if (hex(jsPubC) !== hex(r.cPub)) throw new Error(`public key differs: js=${hex(jsPubC)} c=${hex(r.cPub)}`);
       for (const x of r.js) if (hex(x.pub) !== hex(jsPub)) throw new Error("JS parties disagree on public key");
       // seat 0 receives the signature (C party when cSeat == 0, else JS party 0)
       const sig: Uint8Array = cSeat === 0 ? r.cSig : r.js.find((x: any) => x.idx === 0).sig;
-      const ok = ed ? ed25519Verify(jsPubC, msg, sig) : verifier.verifyDer(curve, jsPub, msg, sig);
+      const ok = ed ? ed25519Verify(jsPubC, msg, sig) : verifier.verifyDer(curve, jsPubC, msg, sig);
       if (!ok) throw new Error("signature does not verify");
     });
   }

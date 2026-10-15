@@ -8,6 +8,7 @@
 #include "access_structure_util.h"
 #include "job_util.h"
 #include "mem_util.h"
+#include "reshare_util.h"
 
 namespace coinbase::api::eddsa_mp {
 
@@ -523,6 +524,36 @@ error_t attach_private_scalar(mem_t public_key_blob, mem_t private_scalar_fixed,
   blob.x_share = std::move(x);
   out_key_blob = coinbase::convert(blob);
   return SUCCESS;
+}
+
+error_t reshare_from_additive(const job_mp_t& job, curve_id curve, buf_t& sid, mem_t public_key_compressed,
+                              const std::vector<std::string_view>& dealer_party_names, mem_t additive_share,
+                              const access_structure_t& new_access_structure, buf_t& new_ac_key_blob) {
+  new_ac_key_blob.free();
+  if (curve != curve_id::ed25519) return coinbase::error(E_BADARG, "unsupported curve");
+  const auto icurve = coinbase::crypto::curve_ed25519;
+  std::vector<std::string_view> new_party_names;
+  coinbase::mpc::schnorrmp::key_t new_key;
+  bool has_new_key = false;
+  error_t rv = coinbase::api::detail::run_reshare_from_additive(
+      job, icurve, sid, public_key_compressed, dealer_party_names, additive_share, new_access_structure,
+      new_party_names, new_key, has_new_key);
+  if (rv || !has_new_key) return rv;
+  return serialize_key_blob_for_party_names(new_party_names, new_key.party_name, new_key, ac_key_blob_version_v1,
+                                            new_ac_key_blob);
+}
+
+error_t ac_key_to_additive_share(mem_t ac_key_blob, const access_structure_t& access_structure,
+                                 const std::vector<std::string_view>& quorum_party_names,
+                                 buf_t& out_additive_share_fixed) {
+  out_additive_share_fixed.free();
+  error_t rv = coinbase::api::detail::validate_mem_arg_max_size(ac_key_blob, "ac_key_blob",
+                                                                coinbase::api::detail::MAX_OPAQUE_BLOB_SIZE);
+  if (rv) return rv;
+  coinbase::mpc::schnorrmp::key_t ac_key;
+  if (rv = deserialize_ac_key_blob(ac_key_blob, ac_key)) return rv;
+  return coinbase::api::detail::ac_key_to_additive_scalar(ac_key, access_structure, quorum_party_names,
+                                                          out_additive_share_fixed);
 }
 
 }  // namespace coinbase::api::eddsa_mp

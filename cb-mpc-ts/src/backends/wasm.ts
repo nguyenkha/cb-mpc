@@ -74,8 +74,11 @@ export class WasmBackend implements CbMpcModule {
     return this.readBytes(dataPtr, size);
   }
 
+  // Buffers can hold key shares or blobs: wipe before freeing.
   freeCmem(cmemPtr: number): void {
     const dataPtr = this.wasm.getValue(cmemPtr, "*");
+    const size = this.wasm.getValue(cmemPtr + 4, "i32");
+    if (dataPtr && size > 0) this.wasm.HEAPU8.fill(0, dataPtr, dataPtr + size);
     if (dataPtr) this.wasm._free(dataPtr);
     this.wasm._free(cmemPtr);
   }
@@ -124,8 +127,14 @@ export class WasmBackend implements CbMpcModule {
   }
 
   freeCmems(cmemsPtr: number): void {
+    const count = this.wasm.getValue(cmemsPtr, "i32");
     const dataPtr = this.wasm.getValue(cmemsPtr + 4, "*");
     const sizesPtr = this.wasm.getValue(cmemsPtr + 8, "*");
+    if (dataPtr && sizesPtr && count > 0) {
+      let total = 0;
+      for (let i = 0; i < count; i++) total += Math.max(0, this.wasm.getValue(sizesPtr + 4 * i, "i32"));
+      this.wasm.HEAPU8.fill(0, dataPtr, dataPtr + total);
+    }
     if (dataPtr) this.wasm._free(dataPtr);
     if (sizesPtr) this.wasm._free(sizesPtr);
     this.wasm._free(cmemsPtr);

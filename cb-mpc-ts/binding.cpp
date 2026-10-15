@@ -8,6 +8,7 @@
 // The native build uses function-pointer registration instead of EM_ASYNC_JS.
 
 #ifdef __EMSCRIPTEN__
+#include <openssl/crypto.h>
 #include <emscripten.h>
 #define EXPORT EMSCRIPTEN_KEEPALIVE
 #else
@@ -238,9 +239,25 @@ cmem_t* wasm_new_cmem(uint8_t* data, int size) {
 EXPORT
 void wasm_free_cmem(cmem_t* cmem) {
   if (cmem) {
+    // Buffers can hold key shares or blobs: wipe before freeing.
+    if (cmem->data && cmem->size > 0) OPENSSL_cleanse(cmem->data, size_t(cmem->size));
     if (cmem->data) free(cmem->data);
     free(cmem);
   }
+}
+
+// Wipes and frees a cmems_t (data, sizes and the struct itself).
+EXPORT
+void wasm_free_cmems(cmems_t* cmems) {
+  if (!cmems) return;
+  if (cmems->data && cmems->sizes && cmems->count > 0) {
+    size_t total = 0;
+    for (int i = 0; i < cmems->count; i++) total += cmems->sizes[i] > 0 ? size_t(cmems->sizes[i]) : 0;
+    OPENSSL_cleanse(cmems->data, total);
+  }
+  free(cmems->data);
+  free(cmems->sizes);
+  free(cmems);
 }
 
 // -- Entropy seeding --
@@ -596,6 +613,51 @@ int wasm_pve_batch_decrypt(int curve_code, cmem_t* dk, cmem_t* ek, cmem_t* ciphe
   if (xs) *xs = cmems_t{0, nullptr, nullptr};
   if (!dk || !ek || !ciphertext || !label) return -1;
   return pve_batch_decrypt(curve_code, *dk, *ek, *ciphertext, *label, xs);
+}
+
+// Access-structure keys: cmem_t / cmems_t inputs passed by pointer.
+EXPORT
+int wasm_mpc_ac_dkg(job_mp_ref* job, int curve_code, cmem_t* ac, cmems_t* quorum, cmem_t* key_blob) {
+  if (key_blob) *key_blob = cmem_t{nullptr, 0};
+  if (!ac || !quorum) return -1;
+  return mpc_ac_dkg(job, curve_code, *ac, *quorum, key_blob);
+}
+
+EXPORT
+int wasm_mpc_ac_refresh(job_mp_ref* job, cmem_t* key_blob, cmem_t* ac, cmems_t* quorum, cmem_t* new_key_blob) {
+  if (new_key_blob) *new_key_blob = cmem_t{nullptr, 0};
+  if (!key_blob || !ac || !quorum) return -1;
+  return mpc_ac_refresh(job, *key_blob, *ac, *quorum, new_key_blob);
+}
+
+EXPORT
+int wasm_mpc_ac_sign(job_mp_ref* job, cmem_t* key_blob, cmem_t* ac, cmem_t* msg, int sig_receiver, cmem_t* sig) {
+  if (sig) *sig = cmem_t{nullptr, 0};
+  if (!key_blob || !ac || !msg) return -1;
+  return mpc_ac_sign(job, *key_blob, *ac, *msg, sig_receiver, sig);
+}
+
+EXPORT
+int wasm_mpc_ac_reshare_from_additive(job_mp_ref* job, int curve_code, cmem_t* public_key, cmems_t* dealers,
+                                      cmem_t* additive_share, cmem_t* new_ac, cmem_t* new_key_blob) {
+  if (new_key_blob) *new_key_blob = cmem_t{nullptr, 0};
+  if (!public_key || !dealers || !additive_share || !new_ac) return -1;
+  return mpc_ac_reshare_from_additive(job, curve_code, *public_key, *dealers, *additive_share, *new_ac, new_key_blob);
+}
+
+EXPORT
+int wasm_mpc_ac_to_additive_share(cmem_t* key_blob, cmem_t* ac, cmems_t* quorum, cmem_t* additive_share) {
+  if (additive_share) *additive_share = cmem_t{nullptr, 0};
+  if (!key_blob || !ac || !quorum) return -1;
+  return mpc_ac_to_additive_share(*key_blob, *ac, *quorum, additive_share);
+}
+
+EXPORT
+int wasm_mpc_ac_key_info(cmem_t* key_blob, cmem_t* public_key, cmem_t* public_share) {
+  if (public_key) *public_key = cmem_t{nullptr, 0};
+  if (public_share) *public_share = cmem_t{nullptr, 0};
+  if (!key_blob) return -1;
+  return mpc_ac_key_info(*key_blob, public_key, public_share);
 }
 
 }  // extern "C"
