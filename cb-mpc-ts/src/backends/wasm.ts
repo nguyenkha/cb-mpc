@@ -176,9 +176,21 @@ export class WasmBackend implements CbMpcModule {
     return this.wasm.ccall(name, "number", argTypes, args) as number;
   }
 
+  // Asyncify keeps one saved stack per module: a second async export call while one is suspended would resume the
+  // wrong protocol state. Reject it instead; run concurrent sessions on separate instances (`initCbMpc` each).
+  private asyncCallInFlight = false;
+
   async callAsync(name: string, ...args: number[]): Promise<number> {
-    const argTypes = args.map(() => "number");
-    return this.wasm.ccall(name, "number", argTypes, args, { async: true }) as Promise<number>;
+    if (this.asyncCallInFlight) {
+      throw new Error(`cb-mpc: ${name} called while another protocol runs on this instance; use one instance per session`);
+    }
+    this.asyncCallInFlight = true;
+    try {
+      const argTypes = args.map(() => "number");
+      return await (this.wasm.ccall(name, "number", argTypes, args, { async: true }) as Promise<number>);
+    } finally {
+      this.asyncCallInFlight = false;
+    }
   }
 
   registerTransport(id: number, transport: DataTransport): void {
