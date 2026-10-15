@@ -171,7 +171,10 @@ cbmpc_error_t cbmpc_ecdsa_mp_attach_private_scalar(cmem_t public_key_blob, cmem_
 // - All parties in `job->party_names` must be online; each is a dealer, a leaf of the new structure, or both.
 // - Dealers pass their additive share (big-endian, at most 64 bytes, reduced mod the curve order); non-dealers pass
 //   `{NULL, 0}`.
-// - Every party MUST take `public_key_compressed` from its own trusted record, never from a peer or relay message.
+// - Every party MUST take `public_key_compressed`, the new structure, the dealer names and the name -> holder mapping
+//   from its own trusted record, never from a peer or relay message.
+// - Pairwise messages carry sub-shares in the clear: encrypt them end to end so that no relay, in particular one run
+//   by another party, can read them. Pass an empty `sid_in` so a fresh session id is derived.
 // - Resharing does not revoke the old shares. Treat the new generation as live only after every party reported
 //   success, then delete the old shares.
 // - For `cbmpc_ecdsa_mp_ac_key_to_additive_share`, pass a minimal qualifying quorum (zero-weight members are rejected).

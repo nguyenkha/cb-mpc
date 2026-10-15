@@ -156,7 +156,16 @@ error_t attach_private_scalar(mem_t public_key_blob, mem_t private_scalar_fixed,
 // - Resharing does not revoke the old shares: any old qualifying set still reconstructs the same key. A malicious
 //   dealer can make one receiver abort while others succeed, so treat the new generation as live only after every
 //   party reported success; then delete the old key blobs (and old additive shares) and run `refresh_ac`.
-// - `sid` is an in/out session id; callers may pass an empty buffer to let the protocol derive one.
+// - Every party MUST also take `new_access_structure`, `dealer_party_names` and the mapping from party names to the
+//   devices/people that hold them from its own record. The protocol only checks that all parties agree; it cannot
+//   tell who runs a leaf, so a coordinator that hands everyone a structure in which it controls a qualifying set of
+//   names gets the key.
+// - Each dealer sends every receiver its sub-share in the clear inside the protocol messages. Pairwise messages MUST
+//   be end-to-end encrypted between the two parties, and a relay operated by another party (e.g. a server that is
+//   itself a receiver) MUST NOT be able to read them: with threshold 2, one intercepted sub-share plus the relay's own
+//   reveals the dealer's additive share. The same holds for `dkg_ac` and `refresh_ac`.
+// - `sid` is an in/out session id. Pass an empty buffer so the protocol derives a fresh one; a caller-supplied sid is
+//   used as given and is not checked for freshness.
 //
 // Supported curves: `curve_id::p256`, `curve_id::secp256k1`.
 error_t reshare_from_additive(const job_mp_t& job, curve_id curve, buf_t& sid, mem_t public_key_compressed,

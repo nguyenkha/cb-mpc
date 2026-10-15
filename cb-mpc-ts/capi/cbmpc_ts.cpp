@@ -1,5 +1,6 @@
 #include "cbmpc_ts.h"
 
+#include <climits>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -58,9 +59,23 @@ cmem_t copy_to_cmem(mem_t mem) {
   return out;
 }
 
+// Total byte length of a cmems, or -1 when a size is negative, the total overflows, or data is missing.
+int cmems_total_size(const cmems_t& cmems) {
+  if (cmems.count < 0 || (cmems.count > 0 && !cmems.sizes)) return -1;
+  int total = 0;
+  for (int i = 0; i < cmems.count; i++) {
+    const int sz = cmems.sizes[i];
+    if (sz < 0 || sz > INT_MAX - total) return -1;
+    total += sz;
+  }
+  if (total > 0 && !cmems.data) return -1;
+  return total;
+}
+
+// Malformed cmems (see cmems_total_size) yield an empty vector, as if no items were given.
 std::vector<buf_t> bufs_from_cmems(cmems_t cmems) {
   std::vector<buf_t> out;
-  if (cmems.count <= 0 || !cmems.sizes) return out;
+  if (cmems.count <= 0 || cmems_total_size(cmems) < 0) return out;
   out.reserve(cmems.count);
   int offset = 0;
   for (int i = 0; i < cmems.count; i++) {
@@ -69,6 +84,12 @@ std::vector<buf_t> bufs_from_cmems(cmems_t cmems) {
     offset += sz;
   }
   return out;
+}
+
+// Protocol messages can carry secret sub-shares (e.g. reshare / DKG `xij`): wipe before handing memory back.
+void wipe_and_free(uint8_t* data, int size) {
+  if (data && size > 0) coinbase::secure_bzero(data, size);
+  std::free(data);
 }
 
 cmems_t copy_to_cmems(const std::vector<mem_t>& mems) {
@@ -154,11 +175,15 @@ class callback_transport_t : public coinbase::api::data_transport_i {
     cmem_t cmsg{nullptr, 0};
     int rv = callbacks_.receive_fun(ctx_, sender, &cmsg);
     if (rv) {
-      std::free(cmsg.data);
+      wipe_and_free(cmsg.data, cmsg.size);
       return error_t(rv);
     }
+    if (cmsg.size < 0 || (cmsg.size > 0 && !cmsg.data)) {
+      wipe_and_free(cmsg.data, 0);
+      return NETWORK_ERROR;
+    }
     msg = buf_t(view(cmsg));
-    std::free(cmsg.data);
+    wipe_and_free(cmsg.data, cmsg.size);
     return SUCCESS;
   }
 
@@ -171,8 +196,11 @@ class callback_transport_t : public coinbase::api::data_transport_i {
     cmems_t cmsgs{0, nullptr, nullptr};
     int rv = callbacks_.receive_all_fun(ctx_, c_senders.data(), n, &cmsgs);
     if (!rv && cmsgs.count != n) rv = NETWORK_ERROR;
+    // Sizes are only trusted from a successful callback with the expected count.
+    const int total = rv ? -1 : cmems_total_size(cmsgs);
+    if (!rv && total < 0) rv = NETWORK_ERROR;
     if (!rv) msgs = bufs_from_cmems(cmsgs);
-    std::free(cmsgs.data);
+    wipe_and_free(cmsgs.data, total);
     std::free(cmsgs.sizes);
     return error_t(rv);
   }

@@ -299,7 +299,14 @@ error_t key_share_mp_t::dkg_or_refresh_ac(job_mp_t& job, const ecurve_t& curve, 
   }
 
   auto h_consistency = job.uniform_msg<buf256_t>();
-  h_consistency._i = crypto::sha256_t::hash(std::string(curve.get_name()), all_pids, quorum_pids, sid);
+  if (is_refresh) {
+    // Fork fix (phase 9 review): bind the key being refreshed. Without it, parties holding blobs of different
+    // generations (or different keys) all "succeed" and silently corrupt their shares.
+    h_consistency._i =
+        crypto::sha256_t::hash(std::string(curve.get_name()), all_pids, quorum_pids, sid, key.Q, key.Qis);
+  } else {
+    h_consistency._i = crypto::sha256_t::hash(std::string(curve.get_name()), all_pids, quorum_pids, sid);
+  }
 
   if (rv = job.plain_broadcast(h_consistency)) return coinbase::error(rv, "Failed to broadcast h_consistency");
 

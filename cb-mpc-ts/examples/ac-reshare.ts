@@ -43,7 +43,13 @@ const verifier = await initCbMpc();
 /** Runs `fn(mpc, transport, index)` for each of `names` concurrently. */
 async function run<T>(names: string[], fn: (mpc: CbMpc, t: any, i: number) => Promise<T>): Promise<T[]> {
   const t = createMockNetwork(names.length);
-  return Promise.all(names.map((n, i) => fn(inst[n], t[i], i)));
+  try {
+    return await Promise.all(names.map((n, i) => fn(inst[n], t[i], i)));
+  } catch (e) {
+    // A party whose peer aborted stays suspended waiting for a message; its instance cannot be reused.
+    for (const n of names) inst[n] = await initCbMpc();
+    throw e;
+  }
 }
 
 function ed25519Verify(pub32: Uint8Array, msg: Uint8Array, sig: Uint8Array): boolean {

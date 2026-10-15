@@ -550,3 +550,80 @@ TYPED_TEST(ApiReshareAc, BystanderPartyRejected) {
     EXPECT_NE(rv, SUCCESS);
   EXPECT_TRUE(g1.empty());
 }
+
+// Review P9 (contract): the library cannot tell who runs a leaf. If the coordinator hands every honest party the
+// same structure in which it controls a qualifying set ("server" and "server-b"), the reshare succeeds and the
+// server alone can sign. Callers must pin the structure and the name -> holder mapping from their own record.
+TYPED_TEST(ApiReshareAc, CoordinatorChosenStructureIsTrustedAsIs) {
+  using Api = TypeParam;
+  buf_t Q;
+  const keys_t xs = two_party_shares<Api>(Q);
+  const std::string_view kServerB = "server-b";
+  const names_t job_names = {kIphone, kServer, kServerB};
+  const access_structure_t rigged = threshold_of(2, job_names);
+  keys_t g1;
+  for (auto rv : reshare<Api>(job_names, {kIphone, kServer}, xs, Q, rigged, g1)) ASSERT_EQ(rv, SUCCESS);
+  EXPECT_TRUE(signs<Api>({kServer, kServerB}, g1, rigged, Q));
+}
+
+// Review P9 (contract): a caller-supplied sid is used as given; nothing checks it is fresh. Two runs with the same
+// sid both succeed, so freshness is the caller's job (pass an empty sid to let the protocol derive one).
+TYPED_TEST(ApiReshareAc, CallerSidIsNotCheckedForFreshness) {
+  using Api = TypeParam;
+  buf_t Q;
+  const keys_t g0 = dkg_2of3<Api>(Q);
+  const names_t pair = {kMac, kServer};
+  const keys_t xs = additive_shares<Api>(g0, pair);
+  const buf_t fixed_sid = msg32();
+  for (int run = 0; run < 2; run++) {
+    net_t net(3);
+    std::vector<buf_t> blobs(3);
+    auto rvs = net.run([&](int i, data_transport_i& t) {
+      job_mp_t job{static_cast<party_idx_t>(i), kAll, t};
+      buf_t sid = fixed_sid;
+      const auto it = xs.find(std::string(kAll[size_t(i)]));
+      const mem_t x = it == xs.end() ? mem_t() : mem_t(it->second);
+      return Api::reshare(job, sid, Q, pair, x, kTwoOfThree, blobs[size_t(i)]);
+    });
+    for (auto rv : rvs) EXPECT_EQ(rv, SUCCESS) << "run " << run;
+  }
+}
+
+// Runs refresh_ac over `parties` with the given blobs and returns the per-party errors.
+template <typename Api>
+std::vector<error_t> refresh_rvs(const names_t& parties, const keys_t& keys, const access_structure_t& ac) {
+  net_t net(static_cast<int>(parties.size()));
+  std::vector<buf_t> fresh(parties.size());
+  return net.run([&](int i, data_transport_i& t) {
+    job_mp_t job{static_cast<party_idx_t>(i), parties, t};
+    buf_t sid;
+    return Api::refresh_ac(job, sid, keys.at(std::string(parties[size_t(i)])), ac, parties, fresh[size_t(i)]);
+  });
+}
+
+// Review P9: refresh must bind the key being refreshed. A stale blob from the previous generation (e.g. a restored
+// server backup after a lost-device reshare), or a blob of another key, must make every party abort instead of
+// silently corrupting shares and bringing a revoked device back into a quorum.
+TYPED_TEST(ApiReshareAc, RefreshRejectsMixedGenerationsAndKeys) {
+  using Api = TypeParam;
+  buf_t Q;
+  const keys_t g0 = dkg_2of3<Api>(Q);
+  keys_t g1;
+  const names_t pair = {kMac, kServer};
+  for (auto rv : reshare<Api>(kAll, pair, additive_shares<Api>(g0, pair), Q, kTwoOfThree, g1)) ASSERT_EQ(rv, SUCCESS);
+
+  // Old device + stale server (gen0) with the gen1 backup.
+  const keys_t stale = {{"iphone", g0.at("iphone")}, {"mac", g1.at("mac")}, {"server", g0.at("server")}};
+  for (auto rv : refresh_rvs<Api>(kAll, stale, kTwoOfThree)) EXPECT_NE(rv, SUCCESS);
+  // Only the device is stale.
+  const keys_t one_stale = {{"iphone", g0.at("iphone")}, {"mac", g1.at("mac")}, {"server", g1.at("server")}};
+  for (auto rv : refresh_rvs<Api>(kAll, one_stale, kTwoOfThree)) EXPECT_NE(rv, SUCCESS);
+  // A blob of another key.
+  buf_t other_Q;
+  const keys_t other = dkg_2of3<Api>(other_Q);
+  const keys_t foreign = {{"iphone", other.at("iphone")}, {"mac", g1.at("mac")}, {"server", g1.at("server")}};
+  for (auto rv : refresh_rvs<Api>(kAll, foreign, kTwoOfThree)) EXPECT_NE(rv, SUCCESS);
+  // The consistent generation still refreshes and signs.
+  const keys_t fresh = refresh_all<Api>(kAll, g1, kTwoOfThree);
+  expect_every_pair_signs<Api>(kAll, fresh, kTwoOfThree, Q);
+}
