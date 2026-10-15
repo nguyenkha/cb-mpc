@@ -13,6 +13,7 @@ on:
       - '**/*.hpp'
       - '**/*.c'
       - '**/*.py'
+      - '.github/workflows/codeql.yml'
 
 permissions:
   contents: read
@@ -70,3 +71,32 @@ jobs:
       with:
         category: "/language:${{matrix.language}}"
         output: sarif-results
+        upload: false
+
+    # gtest's TEST/TYPED_TEST macros define a static `gtest_<Suite>_<Test>_registered_` (or `_dummy_`) whose
+    # initializer registers the test; it is never read by design. Drop only those unused-static-variable results.
+    - name: Filter gtest registration false positives
+      run: |
+        python3 - <<'PY'
+        import glob, json, re
+        gtest = re.compile(r"Static variable gtest_\w+_ is never read")
+        for path in glob.glob("sarif-results/*.sarif"):
+            with open(path) as f:
+                sarif = json.load(f)
+            for run in sarif.get("runs", []):
+                before = len(run.get("results", []))
+                run["results"] = [
+                    r for r in run.get("results", [])
+                    if not (r.get("ruleId") == "cpp/unused-static-variable"
+                            and gtest.search(r.get("message", {}).get("text", "")))
+                ]
+                print(f"{path}: dropped {before - len(run['results'])} gtest registration results")
+            with open(path, "w") as f:
+                json.dump(sarif, f)
+        PY
+
+    - name: Upload CodeQL results
+      uses: github/codeql-action/upload-sarif@fca7ace96b7d713c7035871441bd52efbe39e27e # v3.28.19
+      with:
+        sarif_file: sarif-results
+        category: "/language:${{matrix.language}}"
