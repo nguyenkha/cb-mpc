@@ -96,6 +96,7 @@ jobs:
       - name: Test
         working-directory: rust
         env:
+          CBMPC_FROM_SOURCE: "1"
           CBMPC_REQUIRE_INTEROP: "1"
           CBMPC_REQUIRE_MDWE: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: cargo test --locked

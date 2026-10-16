@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 links = "cbmpc"
 build = "build.rs"
+include = ["build.rs", "prebuilt.rs", "src/**"]
 
 [build-dependencies]
 cmake = "0.1.54"
+sha2 = "0.10"
