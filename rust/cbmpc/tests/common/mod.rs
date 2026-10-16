@@ -18,14 +18,20 @@ impl Transport for ChannelTransport {
         self.tx.send(message.to_vec()).map_err(|_| TransportError)
     }
     fn receive(&mut self, _sender: i32) -> Result<Zeroizing<Vec<u8>>, TransportError> {
-        self.rx.recv_timeout(Duration::from_secs(60)).map(Zeroizing::new).map_err(|_| TransportError)
+        self.rx
+            .recv_timeout(Duration::from_secs(60))
+            .map(Zeroizing::new)
+            .map_err(|_| TransportError)
     }
 }
 
 pub fn pair() -> (ChannelTransport, ChannelTransport) {
     let (a_tx, b_rx) = channel();
     let (b_tx, a_rx) = channel();
-    (ChannelTransport { tx: a_tx, rx: a_rx }, ChannelTransport { tx: b_tx, rx: b_rx })
+    (
+        ChannelTransport { tx: a_tx, rx: a_rx },
+        ChannelTransport { tx: b_tx, rx: b_rx },
+    )
 }
 
 /// Runs `p1` as P1 and `p2` as P2 concurrently and returns both results.

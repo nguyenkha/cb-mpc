@@ -24,7 +24,9 @@ impl Ecdsa2pKey {
 
     /// Runs the 2P DKG as this job's party on curve `curve_code` (e.g. `NID_SECP256K1`).
     pub fn dkg(job: &mut Job2p<'_>, curve_code: i32) -> Result<Self> {
-        let mut k = mpc_ecdsa2pc_key_ref { opaque: std::ptr::null_mut() };
+        let mut k = mpc_ecdsa2pc_key_ref {
+            opaque: std::ptr::null_mut(),
+        };
         // SAFETY: valid job; k receives an owned handle on success.
         let rv = unsafe { cbmpc_sys::mpc_ecdsa2p_dkg(job.raw(), curve_code, &mut k) };
         job.finish("mpc_ecdsa2p_dkg", rv)?;
@@ -36,10 +38,22 @@ impl Ecdsa2pKey {
     /// P2, returns them to the API today).
     pub fn sign(&self, job: &mut Job2p<'_>, sid: &[u8], hashes: &[&[u8]]) -> Result<Vec<Vec<u8>>> {
         let mut msgs = CmemsIn::new("mpc_ecdsa2p_sign", hashes)?;
-        let mut sigs = cmems_t { count: 0, data: std::ptr::null_mut(), sizes: std::ptr::null_mut() };
+        let mut sigs = cmems_t {
+            count: 0,
+            data: std::ptr::null_mut(),
+            sizes: std::ptr::null_mut(),
+        };
         let mut r = self.0;
         // SAFETY: valid job and key; inputs live for the call; sigs receives a malloc'ed list.
-        let rv = unsafe { cbmpc_sys::mpc_ecdsa2p_sign(job.raw(), view("mpc_ecdsa2p_sign", sid)?, &mut r, msgs.raw(), &mut sigs) };
+        let rv = unsafe {
+            cbmpc_sys::mpc_ecdsa2p_sign(
+                job.raw(),
+                view("mpc_ecdsa2p_sign", sid)?,
+                &mut r,
+                msgs.raw(),
+                &mut sigs,
+            )
+        };
         // SAFETY: sigs is library output (or empty); taken over exactly once.
         let out = unsafe { take_cmems(sigs) };
         job.finish("mpc_ecdsa2p_sign", rv)?;
@@ -48,7 +62,11 @@ impl Ecdsa2pKey {
 
     /// Serialized parts in the cb-mpc-ts layout. Secret: wiped when dropped.
     pub fn serialize(&self) -> Result<Vec<Zeroizing<Vec<u8>>>> {
-        let mut ser = cmems_t { count: 0, data: std::ptr::null_mut(), sizes: std::ptr::null_mut() };
+        let mut ser = cmems_t {
+            count: 0,
+            data: std::ptr::null_mut(),
+            sizes: std::ptr::null_mut(),
+        };
         let mut r = self.0;
         // SAFETY: valid key; ser receives a malloc'ed list.
         let rv = unsafe { cbmpc_sys::serialize_mpc_ecdsa2p(&mut r, &mut ser) };
@@ -61,7 +79,9 @@ impl Ecdsa2pKey {
     /// Loads (and validates) a key from its serialized parts. The caller wipes `parts`.
     pub fn deserialize(parts: &[&[u8]]) -> Result<Self> {
         let mut input = CmemsIn::new("deserialize_mpc_ecdsa2p", parts)?;
-        let mut k = mpc_ecdsa2pc_key_ref { opaque: std::ptr::null_mut() };
+        let mut k = mpc_ecdsa2pc_key_ref {
+            opaque: std::ptr::null_mut(),
+        };
         // SAFETY: input lives for the call; k receives an owned handle on success.
         let rv = unsafe { cbmpc_sys::deserialize_mpc_ecdsa2p(input.raw(), &mut k) };
         crate::error::check("deserialize_mpc_ecdsa2p", rv)?;

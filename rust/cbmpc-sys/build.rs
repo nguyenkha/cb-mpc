@@ -10,15 +10,28 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let root = manifest.join("../..").canonicalize().expect("cb-mpc repo root");
+    let root = manifest
+        .join("../..")
+        .canonicalize()
+        .expect("cb-mpc repo root");
     let native = root.join("cb-mpc-ts/native");
 
     println!("cargo:rerun-if-env-changed=CBMPC_OPENSSL_ROOT");
-    for dir in ["src/cbmpc", "include", "include-internal", "cb-mpc-ts/capi", "cb-mpc-ts/binding.cpp", "cb-mpc-ts/native/CMakeLists.txt", "cmake"] {
+    for dir in [
+        "src/cbmpc",
+        "include",
+        "include-internal",
+        "cb-mpc-ts/capi",
+        "cb-mpc-ts/binding.cpp",
+        "cb-mpc-ts/native/CMakeLists.txt",
+        "cmake",
+    ] {
         println!("cargo:rerun-if-changed={}", root.join(dir).display());
     }
 
-    let openssl = PathBuf::from(env::var("CBMPC_OPENSSL_ROOT").unwrap_or_else(|_| "/usr/local/opt/openssl@3.6.4".into()));
+    let openssl = PathBuf::from(
+        env::var("CBMPC_OPENSSL_ROOT").unwrap_or_else(|_| "/usr/local/opt/openssl@3.6.4".into()),
+    );
     let crypto_dir = ["lib64", "lib"]
         .iter()
         .map(|d| openssl.join(d))
@@ -43,7 +56,8 @@ fn main() {
     }
     let dst = cfg.build();
 
-    let lib_dir = find_archive(&dst.join("build")).expect("libcbmpc.a not produced by the CMake build");
+    let lib_dir =
+        find_archive(&dst.join("build")).expect("libcbmpc.a not produced by the CMake build");
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=static=cbmpc");
     println!("cargo:rustc-link-search=native={}", crypto_dir.display());
@@ -63,5 +77,9 @@ fn find_archive(dir: &Path) -> Option<PathBuf> {
     if dir.join("libcbmpc.a").exists() {
         return Some(dir.to_path_buf());
     }
-    std::fs::read_dir(dir).ok()?.flatten().filter(|e| e.path().is_dir()).find_map(|e| find_archive(&e.path()))
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .find_map(|e| find_archive(&e.path()))
 }

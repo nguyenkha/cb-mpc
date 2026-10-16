@@ -32,12 +32,23 @@ macro_rules! opaque_ref {
         }
     )*};
 }
-opaque_ref!(ecurve_ref, ecc_point_ref, job_2p_ref, mpc_ecdsa2pc_key_ref, mpc_eckey_2p_ref);
+opaque_ref!(
+    ecurve_ref,
+    ecc_point_ref,
+    job_2p_ref,
+    mpc_ecdsa2pc_key_ref,
+    mpc_eckey_2p_ref
+);
 
 pub type send_f = unsafe extern "C" fn(ctx: *mut c_void, receiver: c_int, message: cmem_t) -> c_int;
-pub type receive_f = unsafe extern "C" fn(ctx: *mut c_void, sender: c_int, message: *mut cmem_t) -> c_int;
-pub type receive_all_f =
-    unsafe extern "C" fn(ctx: *mut c_void, senders: *mut c_int, sender_count: c_int, messages: *mut cmems_t) -> c_int;
+pub type receive_f =
+    unsafe extern "C" fn(ctx: *mut c_void, sender: c_int, message: *mut cmem_t) -> c_int;
+pub type receive_all_f = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    senders: *mut c_int,
+    sender_count: c_int,
+    messages: *mut cmems_t,
+) -> c_int;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -80,10 +91,19 @@ extern "C" {
     pub fn ecc_point_to_bytes(point: *mut ecc_point_ref) -> cmem_t;
     pub fn ecc_point_get_x(point: *mut ecc_point_ref) -> cmem_t;
     pub fn ecc_point_get_y(point: *mut ecc_point_ref) -> cmem_t;
-    pub fn ecc_verify_der(curve_code: c_int, pub_oct: cmem_t, hash: cmem_t, der_sig: cmem_t) -> c_int;
+    pub fn ecc_verify_der(
+        curve_code: c_int,
+        pub_oct: cmem_t,
+        hash: cmem_t,
+        der_sig: cmem_t,
+    ) -> c_int;
 
     // ECDSA 2P
-    pub fn mpc_ecdsa2p_dkg(job: *mut job_2p_ref, curve_code: c_int, key: *mut mpc_ecdsa2pc_key_ref) -> c_int;
+    pub fn mpc_ecdsa2p_dkg(
+        job: *mut job_2p_ref,
+        curve_code: c_int,
+        key: *mut mpc_ecdsa2pc_key_ref,
+    ) -> c_int;
     pub fn mpc_ecdsa2p_sign(
         job: *mut job_2p_ref,
         sid: cmem_t,
@@ -100,8 +120,17 @@ extern "C" {
     pub fn deserialize_mpc_ecdsa2p(ser: cmems_t, key: *mut mpc_ecdsa2pc_key_ref) -> c_int;
 
     // EC key 2P / Schnorr 2P (EdDSA)
-    pub fn mpc_eckey_2p_dkg(job: *mut job_2p_ref, curve_code: c_int, key: *mut mpc_eckey_2p_ref) -> c_int;
-    pub fn mpc_schnorr2p_eddsa_sign(job: *mut job_2p_ref, key: *mut mpc_eckey_2p_ref, msg: cmem_t, sig: *mut cmem_t) -> c_int;
+    pub fn mpc_eckey_2p_dkg(
+        job: *mut job_2p_ref,
+        curve_code: c_int,
+        key: *mut mpc_eckey_2p_ref,
+    ) -> c_int;
+    pub fn mpc_schnorr2p_eddsa_sign(
+        job: *mut job_2p_ref,
+        key: *mut mpc_eckey_2p_ref,
+        msg: cmem_t,
+        sig: *mut cmem_t,
+    ) -> c_int;
     pub fn free_mpc_eckey_2p(key: mpc_eckey_2p_ref);
     pub fn mpc_eckey_2p_get_role_index(key: *mut mpc_eckey_2p_ref) -> c_int;
     pub fn mpc_eckey_2p_get_Q(key: *mut mpc_eckey_2p_ref) -> ecc_point_ref;
@@ -112,8 +141,20 @@ extern "C" {
 
     // PVE (publicly verifiable encryption), batch, single recipient, ECIES P-256 base PKE
     pub fn pve_generate_ecies_p256_keypair(ek: *mut cmem_t, dk: *mut cmem_t) -> c_int;
-    pub fn pve_batch_encrypt(curve_code: c_int, ek: cmem_t, label: cmem_t, xs: cmems_t, ciphertext: *mut cmem_t) -> c_int;
-    pub fn pve_batch_verify(curve_code: c_int, ek: cmem_t, ciphertext: cmem_t, qs_compressed: cmems_t, label: cmem_t) -> c_int;
+    pub fn pve_batch_encrypt(
+        curve_code: c_int,
+        ek: cmem_t,
+        label: cmem_t,
+        xs: cmems_t,
+        ciphertext: *mut cmem_t,
+    ) -> c_int;
+    pub fn pve_batch_verify(
+        curve_code: c_int,
+        ek: cmem_t,
+        ciphertext: cmem_t,
+        qs_compressed: cmems_t,
+        label: cmem_t,
+    ) -> c_int;
     pub fn pve_batch_decrypt(
         curve_code: c_int,
         dk: cmem_t,

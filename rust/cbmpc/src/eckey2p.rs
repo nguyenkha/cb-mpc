@@ -23,7 +23,9 @@ impl EcKey2p {
 
     /// Runs the 2P EC-key DKG on `curve_code` (kexify: `NID_ED25519`).
     pub fn dkg(job: &mut Job2p<'_>, curve_code: i32) -> Result<Self> {
-        let mut k = mpc_eckey_2p_ref { opaque: std::ptr::null_mut() };
+        let mut k = mpc_eckey_2p_ref {
+            opaque: std::ptr::null_mut(),
+        };
         // SAFETY: valid job; k receives an owned handle on success.
         let rv = unsafe { cbmpc_sys::mpc_eckey_2p_dkg(job.raw(), curve_code, &mut k) };
         job.finish("mpc_eckey_2p_dkg", rv)?;
@@ -32,10 +34,20 @@ impl EcKey2p {
 
     /// Schnorr-2P EdDSA signature over the whole `message` (cb-mpc-ts `schnorr2pEddsaSign`).
     pub fn eddsa_sign(&self, job: &mut Job2p<'_>, message: &[u8]) -> Result<Vec<u8>> {
-        let mut sig = cmem_t { data: std::ptr::null_mut(), size: 0 };
+        let mut sig = cmem_t {
+            data: std::ptr::null_mut(),
+            size: 0,
+        };
         let mut r = self.0;
         // SAFETY: valid job and key; sig receives a malloc'ed buffer.
-        let rv = unsafe { cbmpc_sys::mpc_schnorr2p_eddsa_sign(job.raw(), &mut r, view("mpc_schnorr2p_eddsa_sign", message)?, &mut sig) };
+        let rv = unsafe {
+            cbmpc_sys::mpc_schnorr2p_eddsa_sign(
+                job.raw(),
+                &mut r,
+                view("mpc_schnorr2p_eddsa_sign", message)?,
+                &mut sig,
+            )
+        };
         // SAFETY: library output, taken once.
         let out = unsafe { take_cmem(sig) };
         job.finish("mpc_schnorr2p_eddsa_sign", rv)?;
@@ -44,7 +56,11 @@ impl EcKey2p {
 
     /// Serialized parts in the cb-mpc-ts layout. Secret: wiped when dropped.
     pub fn serialize(&self) -> Result<Vec<Zeroizing<Vec<u8>>>> {
-        let mut ser = cmems_t { count: 0, data: std::ptr::null_mut(), sizes: std::ptr::null_mut() };
+        let mut ser = cmems_t {
+            count: 0,
+            data: std::ptr::null_mut(),
+            sizes: std::ptr::null_mut(),
+        };
         let mut r = self.0;
         // SAFETY: valid key; ser receives a malloc'ed list.
         let rv = unsafe { cbmpc_sys::serialize_mpc_eckey_2p(&mut r, &mut ser) };
@@ -57,7 +73,9 @@ impl EcKey2p {
     /// Loads (and validates) a key from its serialized parts. The caller wipes `parts`.
     pub fn deserialize(parts: &[&[u8]]) -> Result<Self> {
         let mut input = CmemsIn::new("deserialize_mpc_eckey_2p", parts)?;
-        let mut k = mpc_eckey_2p_ref { opaque: std::ptr::null_mut() };
+        let mut k = mpc_eckey_2p_ref {
+            opaque: std::ptr::null_mut(),
+        };
         // SAFETY: input lives for the call; k receives an owned handle on success.
         let rv = unsafe { cbmpc_sys::deserialize_mpc_eckey_2p(input.raw(), &mut k) };
         check("deserialize_mpc_eckey_2p", rv)?;

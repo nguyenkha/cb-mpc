@@ -13,3 +13,4 @@ libc = "0.2"
 zeroize = "1.8"
 
 [dev-dependencies]
+libc = "0.2"

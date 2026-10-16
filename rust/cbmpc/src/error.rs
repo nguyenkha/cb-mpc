@@ -15,7 +15,11 @@ pub const TOO_LARGE: i32 = -0x7000_0002;
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "cb-mpc {} failed (code {} / {:#x})", self.op, self.code, self.code as u32)
+        write!(
+            f,
+            "cb-mpc {} failed (code {} / {:#x})",
+            self.op, self.code, self.code as u32
+        )
     }
 }
 

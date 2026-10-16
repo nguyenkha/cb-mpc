@@ -1,12 +1,18 @@
 // In-process 2-party ECDSA + EdDSA: DKG, batch sign, serialize round trip, key info, PVE.
 mod common;
 
-use cbmpc::{pve, verify_der, Curve, EcKey2p, Ecdsa2pKey, Error, Job2p, Party, Transport, TransportError, Zeroizing};
+use cbmpc::{
+    pve, verify_der, Curve, EcKey2p, Ecdsa2pKey, Error, Job2p, Party, Transport, TransportError,
+    Zeroizing,
+};
 use cbmpc::{NID_ED25519, NID_SECP256K1, TRANSPORT_PANIC};
 use common::{parts_ref, run_2p};
 
 fn ecdsa_pair() -> (Ecdsa2pKey, Ecdsa2pKey) {
-    let (a, b) = run_2p(|j| Ecdsa2pKey::dkg(j, NID_SECP256K1), |j| Ecdsa2pKey::dkg(j, NID_SECP256K1));
+    let (a, b) = run_2p(
+        |j| Ecdsa2pKey::dkg(j, NID_SECP256K1),
+        |j| Ecdsa2pKey::dkg(j, NID_SECP256K1),
+    );
     (a.unwrap(), b.unwrap())
 }
 
@@ -44,7 +50,10 @@ fn ecdsa_dkg_batch_sign_and_reload() {
 
 #[test]
 fn eddsa_dkg_sign_and_reload() {
-    let (a, b) = run_2p(|j| EcKey2p::dkg(j, NID_ED25519), |j| EcKey2p::dkg(j, NID_ED25519));
+    let (a, b) = run_2p(
+        |j| EcKey2p::dkg(j, NID_ED25519),
+        |j| EcKey2p::dkg(j, NID_ED25519),
+    );
     let (k1, k2) = (a.unwrap(), b.unwrap());
     let pk = k1.public_key().unwrap();
     assert_eq!(pk, k2.public_key().unwrap());
@@ -52,7 +61,10 @@ fn eddsa_dkg_sign_and_reload() {
     let parts = k2.serialize().unwrap();
     assert_eq!(parts.len(), 4);
     let k2 = EcKey2p::deserialize(&parts_ref(&parts)).unwrap();
-    let (s1, s2) = run_2p(move |j| k1.eddsa_sign(j, b"kexify"), move |j| k2.eddsa_sign(j, b"kexify"));
+    let (s1, s2) = run_2p(
+        move |j| k1.eddsa_sign(j, b"kexify"),
+        move |j| k2.eddsa_sign(j, b"kexify"),
+    );
     let s1 = s1.unwrap();
     s2.unwrap();
     assert_eq!(s1.len(), 64);
@@ -70,7 +82,12 @@ fn pve_round_trip_on_the_server_share() {
     assert!(pve::batch_verify(NID_SECP256K1, &ek, &ct, &[&q2], b"other").is_err());
     let xs = pve::batch_decrypt(NID_SECP256K1, &dk, &ek, &ct, b"label").unwrap();
     // Compare as integers (the decrypted scalar may be encoded at another length).
-    let trim = |b: &[u8]| b.iter().skip_while(|x| **x == 0).copied().collect::<Vec<_>>();
+    let trim = |b: &[u8]| {
+        b.iter()
+            .skip_while(|x| **x == 0)
+            .copied()
+            .collect::<Vec<_>>()
+    };
     assert_eq!(trim(&xs[0]), trim(&x2));
 }
 
@@ -95,7 +112,13 @@ fn a_panicking_transport_fails_the_run_instead_of_unwinding_into_cpp() {
     let mut t = Panicking;
     let mut job = Job2p::new(&mut t, Party::P1, common::NAMES).unwrap();
     let err = Ecdsa2pKey::dkg(&mut job, NID_SECP256K1).err().unwrap();
-    assert_eq!(err, Error { op: "mpc_ecdsa2p_dkg", code: TRANSPORT_PANIC });
+    assert_eq!(
+        err,
+        Error {
+            op: "mpc_ecdsa2p_dkg",
+            code: TRANSPORT_PANIC
+        }
+    );
 }
 
 struct Closed;

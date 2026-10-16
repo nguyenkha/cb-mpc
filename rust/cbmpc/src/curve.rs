@@ -17,7 +17,10 @@ impl Curve {
         let r = unsafe { cbmpc_sys::new_ecurve(code) };
         last_error("new_ecurve")?;
         if r.opaque.is_null() {
-            return Err(Error { op: "new_ecurve", code: -1 });
+            return Err(Error {
+                op: "new_ecurve",
+                code: -1,
+            });
         }
         Ok(Self(r))
     }
@@ -37,7 +40,9 @@ impl Curve {
         let mut r = self.0;
         clear_last_error();
         // SAFETY: valid handle and view; returns an owned point handle.
-        let p = unsafe { cbmpc_sys::ecurve_mul_generator(&mut r, view("ecurve_mul_generator", scalar)?) };
+        let p = unsafe {
+            cbmpc_sys::ecurve_mul_generator(&mut r, view("ecurve_mul_generator", scalar)?)
+        };
         Point::own("ecurve_mul_generator", p)
     }
 }
@@ -62,7 +67,8 @@ impl Point {
 
     /// cb-mpc's own point encoding (`coinbase::ser`), what cb-mpc-ts `pointToBytes` returns.
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        self.read("ecc_point_to_bytes", cbmpc_sys::ecc_point_to_bytes).map(|b| b.to_vec())
+        self.read("ecc_point_to_bytes", cbmpc_sys::ecc_point_to_bytes)
+            .map(|b| b.to_vec())
     }
 
     /// `0x04 || X || Y` exactly as cb-mpc-ts `pointToSec1` builds it: both coordinates left-padded to
@@ -101,10 +107,20 @@ impl Drop for Point {
 }
 
 /// True when the DER `signature` over `hash` verifies under `public_key` (SEC1 octets).
-pub fn verify_der(curve_code: i32, public_key: &[u8], hash: &[u8], signature: &[u8]) -> Result<bool> {
+pub fn verify_der(
+    curve_code: i32,
+    public_key: &[u8],
+    hash: &[u8],
+    signature: &[u8],
+) -> Result<bool> {
     // SAFETY: views of live slices, only read.
     let rv = unsafe {
-        cbmpc_sys::ecc_verify_der(curve_code, view("ecc_verify_der", public_key)?, view("ecc_verify_der", hash)?, view("ecc_verify_der", signature)?)
+        cbmpc_sys::ecc_verify_der(
+            curve_code,
+            view("ecc_verify_der", public_key)?,
+            view("ecc_verify_der", hash)?,
+            view("ecc_verify_der", signature)?,
+        )
     };
     Ok(rv == 0)
 }
