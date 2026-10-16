@@ -18,7 +18,7 @@ These live in files upstream does not have, so upstream merges do not touch them
 | `cb-mpc-ts/` | The TypeScript package: WASM backend (Emscripten), native backends (`bun:ffi`, koffi), examples, tests. |
 | `cb-mpc-ts/capi/` | C ABI used by the package. Replaces the Go cgobinding that upstream removed in v0.2.0; keeps the 0.1.x symbols and key serialization so old keys still load. |
 | `cb-mpc-ts/capi/hd_keyset.{h,inc}` | HD keysets for 2-party ECDSA/EdDSA on top of upstream's internal HD code: derive, account node / xpub, upgrade an existing key. Upstream only exposes HD in its C++ API (no chain code / xpub). |
-| `cb-mpc-ts/scripts/` | Test suites: `hd.ts`, `error-paths.ts`, `native-mp/` (one worker per party, bun:ffi + koffi), `c-interop/` (JS parties vs upstream's C API), `compat-npm.ts` (vs published releases); portable Linux build + checks. |
+| `cb-mpc-ts/scripts/` | Test suites: `hd.ts`, `error-paths.ts`, `native-mp/` (one worker per party, bun:ffi + koffi), `c-interop/` (JS parties vs upstream's C API), `compat-npm.ts` (vs published releases), `compat-reshare.ts` (2-of-2 shares from 0.1.x reshared to 2-of-3); portable Linux build + checks. |
 | `scripts/openssl/build-static-openssl-wasm.sh` | OpenSSL 3.6.4 for wasm32. |
 | `.github/workflows/build-prebuilds.yml` | Builds WASM and native prebuilds (Linux glibc/musl x64/arm64 in old-glibc / Alpine containers, macOS arm64), smoke-tests them on Debian 11/12 and Alpine, publishes to npm on `v*` tags. |
 | `Makefile` (`wasm`, `native` targets) | Local WASM / native builds of the package. |
