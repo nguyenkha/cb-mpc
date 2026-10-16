@@ -13,6 +13,25 @@ Supports three backends:
 - **bun:ffi** — Bun runtime (native performance)
 - **koffi** — Node.js runtime (native performance)
 
+## Differences from upstream coinbase/cb-mpc
+
+This package is built from the fork [nguyenkha/cb-mpc](https://github.com/nguyenkha/cb-mpc);
+the protocols are upstream's. What the fork adds or changes (full list:
+[FORK.md](https://github.com/nguyenkha/cb-mpc/blob/master/FORK.md)):
+
+- **JavaScript/TypeScript package**: WASM build and native prebuilds (Linux glibc/musl
+  x64/arm64, macOS arm64) with a C ABI layer, since upstream has no JS binding.
+  Upstream supports native 64-bit macOS/Linux only; WASM is fork territory and uses
+  variable-time modular arithmetic there.
+- **HD keysets** with account xpub export and upgrade of existing keys (upstream has
+  HD only in its C++ API, without chain codes).
+- **Access-structure resharing** (`reshareFromAdditive`, `acToAdditiveShare`), plus a
+  `refresh_ac` key-binding fix not in upstream.
+- **Stricter input handling**: every key share is validated on load; native errors
+  surface as `CbMpcError` instead of crashing the process.
+- Interoperates with upstream's C API (tested); key shares load across all versions,
+  protocol messages are compatible only between parties on 0.3+.
+
 ## Upgrading from 0.1.x
 
 0.3.0 is built on upstream cb-mpc after v0.2.2 (security fixes, including the
