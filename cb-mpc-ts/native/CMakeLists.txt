@@ -28,6 +28,12 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-switch-enum -Wno-sign-compare")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-strict-overflow -Wno-unused")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-shorten-64-to-32")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -DNDEBUG")
+# Same as upstream cmake/compilation_flags.cmake: the core uses ARMv8 crypto
+# intrinsics (e.g. vmull_p64). Apple clang enables them by default; GCC/clang
+# on Linux need it explicitly.
+if(IS_ARM64 AND NOT IS_MACOS)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8-a+crypto")
+endif()
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions")
 
 # ------------- Source files ----------------------------------------------------
@@ -109,6 +115,9 @@ elseif(IS_LINUX)
     INSTALL_RPATH "$ORIGIN"
   )
   target_link_options(cbmpc PRIVATE "-Wl,--version-script=${CMAKE_BINARY_DIR}/exports.map")
+  # Link the C++ runtime statically: the .so then needs only glibc (no GLIBCXX
+  # version), and the version script above keeps those symbols local.
+  target_link_options(cbmpc PRIVATE -static-libstdc++ -static-libgcc)
 endif()
 
 # Install to cb-mpc-ts/prebuilds/<platform>-<arch>/

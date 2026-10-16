@@ -61,5 +61,13 @@
   ],
   "dependencies": {
     "debug": "^4.4.3"
+  },
+  "peerDependencies": {
+    "koffi": "^3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "koffi": {
+      "optional": true
+    }
   }
 }

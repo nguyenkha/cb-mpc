@@ -32,9 +32,12 @@ jobs:
     strategy:
       matrix:
         include:
+          # Linux libraries are built in manylinux_2_28 (glibc 2.28) by
+          # cb-mpc-ts/scripts/build-linux-prebuild.sh so they load on older distros.
           - os: ubuntu-latest
             platform: linux-x64
-            openssl_script: scripts/openssl/build-static-openssl-linux.sh
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
           - os: macos-14
             platform: darwin-arm64
             openssl_script: scripts/openssl/build-static-openssl-macos-m1.sh
@@ -52,29 +55,39 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install dependencies (Linux)
+      - name: Build native shared library (Linux, manylinux_2_28 container)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake clang
+        run: bash cb-mpc-ts/scripts/build-linux-prebuild.sh
 
-      - name: Build OpenSSL
+      - name: Build OpenSSL (macOS)
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
         run: |
           sudo mkdir -p /usr/local/opt
-          sudo bash ${{ matrix.openssl_script }}
+          sudo -E bash ${{ matrix.openssl_script }}
 
-      - name: Build native shared library
+      - name: Build native shared library (macOS)
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
         run: |
           cmake -B build/native -S cb-mpc-ts/native \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER=clang++ \
-            -DCMAKE_OSX_ARCHITECTURES=$(uname -m)
-          cmake --build build/native -- -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+            -DCMAKE_OSX_ARCHITECTURES=$(uname -m) \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          cmake --build build/native -- -j$(sysctl -n hw.ncpu)
 
       - name: Verify output
         run: |
           ls -lh cb-mpc-ts/prebuilds/${{ matrix.platform }}/
           file cb-mpc-ts/prebuilds/${{ matrix.platform }}/libcbmpc.*
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            bash cb-mpc-ts/scripts/check-linux-prebuild.sh cb-mpc-ts/prebuilds/${{ matrix.platform }}/libcbmpc.so
+          else
+            otool -l cb-mpc-ts/prebuilds/${{ matrix.platform }}/libcbmpc.dylib | grep -A3 LC_BUILD_VERSION
+          fi
 
       - name: Upload prebuild artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -186,11 +199,45 @@ jobs:
             cb-mpc-ts/LICENSE
           retention-days: 90
 
+  smoke-linux:
+    # Load the packaged Linux libraries on older distros through koffi and
+    # compare results with the WASM build (catches glibc / libstdc++ drift).
+    needs: [build-typescript]
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            image: node:22-bullseye
+          - os: ubuntu-latest
+            image: node:22-bookworm
+          - os: ubuntu-24.04-arm
+            image: node:22-bookworm
+    runs-on: ${{ matrix.os }}
+    name: Smoke ${{ matrix.image }} (${{ matrix.os }})
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.12.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download package artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cb-mpc-package
+          path: pkg
+
+      - name: Load native library in ${{ matrix.image }}
+        run: |
+          docker run --rm -v "$PWD/pkg":/pkg -v "$PWD/cb-mpc-ts/scripts":/scripts -w /pkg ${{ matrix.image }} \
+            bash -c 'npm install --no-save --no-audit --no-fund koffi debug >/dev/null && node /scripts/native-smoke.mjs /pkg'
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     name: Publish to npm
-    needs: [build-typescript]
+    needs: [build-typescript, smoke-linux]
     permissions:
       contents: read
 

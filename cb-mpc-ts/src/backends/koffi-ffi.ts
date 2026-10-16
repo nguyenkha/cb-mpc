@@ -23,7 +23,15 @@ async function loadKoffi(): Promise<any> {
     const { createRequire } = await import(/* @vite-ignore */ moduleName);
     _require = createRequire(import.meta.url);
   }
-  return _require!("koffi");
+  try {
+    return _require!("koffi");
+  } catch (e) {
+    throw new Error(
+      "cb-mpc: the koffi backend needs the optional 'koffi' package (npm install koffi). " +
+        "Alternatives: initCbMpcBunFfi() under Bun, or initCbMpc() for WASM. " +
+        `(${(e as Error).message})`,
+    );
+  }
 }
 
 class KoffiLib implements NativeLib {
