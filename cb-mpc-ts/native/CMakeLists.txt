@@ -56,7 +56,16 @@ set(API_SRCS
 
 # ------------- Build target ----------------------------------------------------
 
-add_library(cbmpc SHARED
+# CBMPC_NATIVE_STATIC=ON builds libcbmpc.a for static linking into a native program (the Rust crates
+# in rust/cbmpc-sys); the default is the shared library cb-mpc-ts loads through FFI.
+option(CBMPC_NATIVE_STATIC "Build a static library instead of the FFI shared library" OFF)
+if(CBMPC_NATIVE_STATIC)
+  set(CBMPC_LIBRARY_TYPE STATIC)
+else()
+  set(CBMPC_LIBRARY_TYPE SHARED)
+endif()
+
+add_library(cbmpc ${CBMPC_LIBRARY_TYPE}
   ${CORE_SRCS}
   ${CRYPTO_SRCS}
   ${ZK_SRCS}
@@ -80,6 +89,11 @@ set_source_files_properties(${CAPI_SRCS} PROPERTIES
 )
 
 link_openssl(cbmpc)
+
+# The static archive is linked by its consumer; exports, rpath and prebuild copies are for the .so/.dylib.
+if(CBMPC_NATIVE_STATIC)
+  return()
+endif()
 
 # Export list — make C ABI symbols visible despite -fvisibility=hidden
 set(EXPORTS_FILE "${CMAKE_CURRENT_LIST_DIR}/exports.txt")

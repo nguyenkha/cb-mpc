@@ -1,0 +1,16 @@
+# Rust bindings for cb-mpc over the cb-mpc-ts C ABI (cb-mpc-ts/capi/cbmpc_ts.h): the ABI the
+# TypeScript package, the kexify web app and the kexify iOS app use, so keys and protocol messages
+# are byte-compatible with all of them.
+[workspace]
+resolver = "2"
+members = ["cbmpc-sys", "cbmpc"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/nguyenkha/cb-mpc"
+
+[profile.release]
+debug = false
