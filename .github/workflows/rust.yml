@@ -115,6 +115,8 @@ jobs:
         env:
           CBMPC_REQUIRE_INTEROP: "1"
           CBMPC_REQUIRE_MDWE: ${{ runner.os == 'Linux' && '1' || '0' }}
+          # No usable OpenSSL: a silent fallback to the source build fails instead of passing.
+          CBMPC_OPENSSL_ROOT: /nonexistent
         run: |
           cargo clean -p cbmpc-sys
-          env -u CBMPC_OPENSSL_ROOT cargo test --locked
+          cargo test --locked

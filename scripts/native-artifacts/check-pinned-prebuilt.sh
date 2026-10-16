@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # For the release pinned in rust/cbmpc-sys/prebuilt.rs (if any): download every pinned
 # cbmpc-native-<platform>.tar.gz, compare its sha256 with the pin, and verify its GitHub build
-# provenance (gh attestation verify, this repo's workflows). Sets the step output pinned=true|false.
+# provenance (gh attestation verify, this repo's workflows). Sets the step output pinned=true when
+# a release is pinned and this runner's platform is among the pins (a pinned tag that leaves out a
+# platform the CI tests on is an error).
 # Usage: check-pinned-prebuilt.sh <prebuilt.rs>   (needs gh with GH_TOKEN)
 set -euo pipefail
 FILE=$1
@@ -16,6 +18,18 @@ fi
 W=$(mktemp -d)
 pins=$(sed -n 's/^ *("\([a-z0-9-]*\)", "\([0-9a-f]\{64\}\)"),*$/\1 \2/p' "$FILE")
 [ -n "$pins" ] || { echo "PREBUILT_TAG=$TAG but no (platform, sha256) pins parsed from $FILE" >&2; exit 1; }
+# One tuple per line: every tuple in the file must have been parsed.
+tuples=$(grep -o '("[^"]*", *"[^"]*")' "$FILE" | wc -l | tr -d ' ')
+[ "$tuples" -eq "$(echo "$pins" | wc -l | tr -d ' ')" ] || { echo "$FILE: write one (platform, sha256) tuple per line" >&2; exit 1; }
+case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64) here=linux-x64 ;;
+  Darwin-arm64) here=darwin-arm64 ;;
+  *) here="" ;;
+esac
+if [ -n "$here" ] && ! echo "$pins" | grep -q "^$here "; then
+  echo "PREBUILT_TAG=$TAG pins no artifact for this runner ($here)" >&2
+  exit 1
+fi
 while read -r platform sha; do
   name="cbmpc-native-$platform.tar.gz"
   gh release download "$TAG" --repo "$REPO" --pattern "$name" --dir "$W"

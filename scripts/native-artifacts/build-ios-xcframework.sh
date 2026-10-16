@@ -80,7 +80,9 @@ slice() { # <sim|device> -> <W>/slice-<kind>/libcbmpc.a
 HEADERS="$W/headers"
 rm -rf "$HEADERS"; mkdir -p "$HEADERS/cbmpc/c_api"
 cp cb-mpc-ts/capi/cbmpc_ts.h "$HEADERS/"
-cp include/cbmpc/c_api/*.h "$HEADERS/cbmpc/c_api/"
+for h in include/cbmpc/c_api/*.h; do
+  case "$h" in */pve_*) ;; *) cp "$h" "$HEADERS/cbmpc/c_api/" ;; esac # C-API PVE is not compiled in
+done
 cp -R "$(openssl_ios device)/include/openssl" "$HEADERS/" # same headers for both slices
 
 DEVICE_LIB=$(slice device) || exit 1
