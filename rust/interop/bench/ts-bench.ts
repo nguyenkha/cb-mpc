@@ -72,13 +72,40 @@ async function benchFfi() {
   // ring[i] carries messages TO party i.
   const rings = [createRing(), createRing()];
   const url = new URL("./ffi-party-worker.ts", import.meta.url).href;
+  // ctrl[0] = index of the run both workers may start, ctrl[1] = finished party-runs (see the worker).
+  const ctrlSab = new SharedArrayBuffer(8);
+  const ctrl = new Int32Array(ctrlSab);
   const workers = [new Worker(url), new Worker(url)];
-  const done = workers.map((w) => new Promise<Record<string, number[]>>((resolve, reject) => {
-    w.onmessage = (e) => (e.data.type === "done" ? resolve(e.data.times) : reject(new Error(e.data.message)));
-    w.onerror = (e) => reject(new Error(e.message));
-  }));
-  workers.forEach((w, party) => w.postMessage({ party, inbox: rings[party], outbox: rings[1 - party], nDkg, nSign }));
-  const [times] = await Promise.all(done); // P1's view of each run
+  const state = workers.map((w) => {
+    const s = { ready: null as null | Promise<void>, done: null as null | Promise<void> };
+    let ready!: () => void, done!: () => void, fail!: (e: Error) => void;
+    s.ready = new Promise<void>((r, j) => { ready = r; fail = j; });
+    s.done = new Promise<void>((r, j) => { done = r; const f = fail; fail = (e) => { f(e); j(e); }; });
+    w.onmessage = (e) => (e.data.type === "ready" ? ready() : e.data.type === "done" ? done() : fail(new Error(e.data.message)));
+    w.onerror = (e) => fail(new Error(e.message));
+    return s;
+  });
+  workers.forEach((w, party) => w.postMessage({ party, inbox: rings[party], outbox: rings[1 - party], ctrl: ctrlSab, nDkg, nSign }));
+  await Promise.all(state.map((s) => s.ready)); // native library loaded in both
+
+  // The main thread times every run from the common start signal until both parties are done.
+  const times: Record<string, number[]> = {};
+  const plan: [string, number][] = [["ecdsa_dkg", nDkg], ["ecdsa_sign_1", nSign], ["ecdsa_sign_10", nSign], ["eddsa_dkg", nDkg], ["eddsa_sign", nSign]];
+  let k = 0;
+  for (const [op, n] of plan) {
+    for (let i = 0; i < n; i++) {
+      k++;
+      const start = performance.now();
+      Atomics.store(ctrl, 0, k);
+      Atomics.notify(ctrl, 0);
+      while (Atomics.load(ctrl, 1) < 2 * k) {
+        if (performance.now() - start > 120_000) throw new Error(`ffi run ${op} #${i} did not finish`);
+        Atomics.wait(ctrl, 1, Atomics.load(ctrl, 1), 1000);
+      }
+      (times[op] ??= []).push(performance.now() - start);
+    }
+  }
+  await Promise.all(state.map((s) => s.done));
   workers.forEach((w) => w.terminate());
   return times;
 }
