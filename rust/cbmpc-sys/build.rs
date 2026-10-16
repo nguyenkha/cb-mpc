@@ -37,7 +37,7 @@ fn main() {
         artifact_dirs(&download(platform, sha256))
     } else {
         println!(
-            "cargo:warning=cbmpc-sys: no prebuilt cb-mpc artifact pinned for {} (release tag '{}'); building from source",
+            "cargo:warning=cbmpc-sys: no prebuilt cb-mpc artifact pinned for {} (release tag '{}'; prebuilt targets: x86_64-unknown-linux-gnu, aarch64-apple-darwin); building from source, which needs CMake and CBMPC_OPENSSL_ROOT",
             env::var("TARGET").unwrap(),
             PREBUILT_TAG
         );

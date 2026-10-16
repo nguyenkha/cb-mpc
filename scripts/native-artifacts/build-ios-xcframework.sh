@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Build CbMpc.xcframework for iOS (device arm64 + simulator arm64): per slice one static
-# libcbmpc.a = cb-mpc (core/crypto/zk/protocol + the public API files the C ABI uses) + the cb-mpc-ts
-# C ABI (capi/cbmpc_ts.cpp) + static OpenSSL 3.6.4, with cbmpc_ts.h + cbmpc/c_api/cmem.h as headers.
+# libcbmpc.a = cb-mpc (core/crypto/zk/protocol, the public C++ API and the upstream C API except its
+# PVE files, i.e. what the kexify iOS app compiles today) + the cb-mpc-ts C ABI (capi/cbmpc_ts.cpp)
+# + static OpenSSL 3.6.4. Headers: cbmpc_ts.h, cbmpc/c_api/*.h and openssl/*.h (the app's bridge
+# uses OpenSSL directly; it must use these, not a second libcrypto).
 # App-specific glue (e.g. a Swift bridge) is compiled by the app and links against it.
 # No CMake: upstream cmake/arch.cmake rejects iPhone SDKs. Flags mirror cb-mpc-ts/native/CMakeLists.txt.
 # OpenSSL: built per slice like scripts/openssl/build-static-openssl-macos-m1.sh (same tarball hash,
@@ -59,9 +61,11 @@ slice() { # <sim|device> -> <W>/slice-<kind>/libcbmpc.a
   flags=(-target "$tgt" -isysroot "$sysroot" -std=c++17 -fPIC -O3 -DNDEBUG -fno-operator-names
     -DNO_DEPRECATED_OPENSSL -fexceptions -Wno-everything
     -I"$ROOT/include" -I"$ROOT/include-internal" -I"$ROOT/src" -I"$ROOT/cb-mpc-ts/capi" -I"$ROOT/vendors" -I"$ossl/include")
-  sources=("$ROOT"/src/cbmpc/{core,crypto,zk,protocol}/*.cpp
-    "$ROOT"/src/cbmpc/api/{pve_base_pke,pve_batch_single_recipient,ecdsa_mp,eddsa_mp}.cpp
-    "$ROOT/cb-mpc-ts/capi/cbmpc_ts.cpp")
+  sources=("$ROOT"/src/cbmpc/{core,crypto,zk,protocol,api}/*.cpp "$ROOT/cb-mpc-ts/capi/cbmpc_ts.cpp")
+  local f
+  for f in "$ROOT"/src/cbmpc/c_api/*.cpp; do
+    case "$f" in */c_api/pve_*) ;; *) sources+=("$f") ;; esac # C-API PVE needs extra error headers
+  done
   printf '%s\n' "${sources[@]}" | xargs -P"$(sysctl -n hw.ncpu)" -I{} sh -c \
     'xcrun clang++ "$@" -c "$0" -o "'"$obj"'/$(echo "$0" | shasum | cut -c1-16).o"' {} "${flags[@]}" >&2 \
     || { echo "compile failed ($kind)" >&2; return 1; }
@@ -76,7 +80,8 @@ slice() { # <sim|device> -> <W>/slice-<kind>/libcbmpc.a
 HEADERS="$W/headers"
 rm -rf "$HEADERS"; mkdir -p "$HEADERS/cbmpc/c_api"
 cp cb-mpc-ts/capi/cbmpc_ts.h "$HEADERS/"
-cp include/cbmpc/c_api/cmem.h "$HEADERS/cbmpc/c_api/"
+cp include/cbmpc/c_api/*.h "$HEADERS/cbmpc/c_api/"
+cp -R "$(openssl_ios device)/include/openssl" "$HEADERS/" # same headers for both slices
 
 DEVICE_LIB=$(slice device) || exit 1
 SIM_LIB=$(slice sim) || exit 1

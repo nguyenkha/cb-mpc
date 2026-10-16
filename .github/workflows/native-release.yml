@@ -7,12 +7,12 @@ name: Native release artifacts
 #   cbmpc-native-ios.xcframework.zip CbMpc.xcframework (device arm64 + simulator arm64, OpenSSL folded in)
 # Each linux/macOS artifact is verified by running the Rust crates' tests against it (incl. the
 # cb-mpc-ts interop test and, on Linux, MemoryDenyWriteExecute). Then SHA256SUMS + build provenance
-# attestations; on a v* tag the files are uploaded to that tag's GitHub Release (a draft is created
-# if none exists, for a maintainer to publish). Pull requests touching the build and
+# attestations; on a release tag the files are uploaded to the draft release that make-release.yml
+# creates for the same tag (never a second draft, never a published release). Pull requests touching the build and
 # workflow_dispatch are dry runs: artifacts on the run only, no attestation, no release.
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]*.[0-9]*.[0-9]*"] # same tags as make-release.yml
   pull_request:
     paths:
       - "scripts/native-artifacts/**"
@@ -39,7 +39,7 @@ jobs:
           submodules: recursive
       - name: Build in manylinux_2_28
         run: |
-          docker run --rm -v "$PWD":/src -w /src -e GITHUB_REF_NAME quay.io/pypa/manylinux_2_28_x86_64 bash -euo pipefail -c '
+          docker run --rm -v "$PWD":/src -w /src -e GITHUB_REF_NAME quay.io/pypa/manylinux_2_28_x86_64@sha256:4131ddd7acb9c6c966af02fe7e71edc51e078c2d41f475966697676430bfa2ae bash -euo pipefail -c '
             dnf install -y -q perl >/dev/null
             git config --global --add safe.directory /src
             bash scripts/native-artifacts/build-native-static.sh linux-x64 dist
@@ -174,17 +174,18 @@ jobs:
         with:
           name: native-release
           path: dist/
-      - name: Upload to the tag's release (draft if new)
+      - name: Upload to the tag's draft release (made by make-release.yml)
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          # Only ever write to a draft: a published release's assets are never replaced.
-          if draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
-            [ "$draft" = "true" ] || { echo "release $TAG is already published; refusing to replace its assets" >&2; exit 1; }
-          else
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
-              --title "$TAG" --notes "Native artifacts for $TAG (see SHA256SUMS; verify with gh attestation verify)."
-          fi
+          # make-release.yml creates the tag's draft; wait for it (never create a second one) and only
+          # ever write to a draft: a published release's assets are never replaced.
+          for _ in $(seq 60); do
+            draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null) && break
+            sleep 10
+          done
+          [ -n "${draft:-}" ] || { echo "no release for $TAG after 10 min (make-release.yml)" >&2; exit 1; }
+          [ "$draft" = "true" ] || { echo "release $TAG is already published; refusing to replace its assets" >&2; exit 1; }
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber dist/cbmpc-native-* dist/SHA256SUMS
