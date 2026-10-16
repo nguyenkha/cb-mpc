@@ -152,6 +152,27 @@ for (const backend of ["bun", "koffi"]) {
     if (hex(r0.node.publicKey) !== hex(wn.publicKey) || hex(r0.node.chainCode) !== hex(wn.chainCode)) throw new Error("native node != WASM node");
     if (!wasm.verifyDer(M.NID_secp256k1, wasmPub, hash, r0.sig)) throw new Error("sig invalid");
   });
+  await check(`${backend}: Ed25519 HD keyset made on WASM, derived + signed on native, node matches WASM`, async () => {
+    const [a, b] = [await M.initCbMpc(), await M.initCbMpc()];
+    const mk = () => { const q: Uint8Array[][] = [[], []]; const ws: any[] = [null, null];
+      return [0, 1].map((i) => ({
+        async send(_r: number, m: Uint8Array) { const o = 1 - i; if (ws[o]) { const w = ws[o]; ws[o] = null; w(m.slice()); } else q[o].push(m.slice()); return 0; },
+        async receive() { return q[i].length ? q[i].shift()! : new Promise<Uint8Array>((r) => (ws[i] = r)); },
+        async receiveAll(s: number[]) { return Promise.all(s.map(() => this.receive())); } })); };
+    let t = mk();
+    const ks = await Promise.all([a.hdEddsa2pDkg(t[0], 0, ["p0", "p1"], M.NID_ED25519), b.hdEddsa2pDkg(t[1], 1, ["p0", "p1"], M.NID_ED25519)]);
+    const hardened = [0x8000002c, 0x800001f5, 0x80000001], path = [3];
+    t = mk();
+    const [wk] = await Promise.all([a.hdEddsa2pDerive(t[0], 0, ["p0", "p1"], ks[0], hardened, [path]), b.hdEddsa2pDerive(t[1], 1, ["p0", "p1"], ks[1], hardened, [path])]);
+    t = mk();
+    const [wn] = await Promise.all([a.hdEddsa2pAccountNode(t[0], 0, ["p0", "p1"], ks[0], hardened), b.hdEddsa2pAccountNode(t[1], 1, ["p0", "p1"], ks[1], hardened)]);
+    const keysets = [a.serializeHdEddsa2p(ks[0]), b.serializeHdEddsa2p(ks[1])];
+    const [r0, r1] = await runParties(2, backend, { kind: "hdsign_ed", keysets, hardened, path, msg: text });
+    const wasmPub = a.ecKey2pInfo(wk[0]).publicKey;
+    if (hex(r0.pub) !== hex(wasmPub) || hex(r1.pub) !== hex(wasmPub)) throw new Error("native derive != WASM derive");
+    if (hex(r0.node.publicKey) !== hex(wn.publicKey) || hex(r0.node.chainCode) !== hex(wn.chainCode)) throw new Error("native node != WASM node");
+    if (!ed25519Verify(wasmPub, text, r0.sig)) throw new Error("sig invalid");
+  });
   await check(`${backend}: zkDl prove/verify cross-backend (aux > 2^32)`, async () => {
     const n = backend === "koffi" ? await M.initCbMpcKoffi(libPath) : await M.initCbMpcBunFfi(libPath);
     const aux = 2 ** 40 + 12345;

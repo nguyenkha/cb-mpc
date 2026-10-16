@@ -133,6 +133,13 @@ await check("secp256k1: upgrade existing key -> keyset; root unchanged; old key 
   assert(ms[0].verifyDer(M.NID_secp256k1, pub, h, s[0]), "derived sig");
   [s] = await both(ms, (m, t, i) => m.ecdsa2pSign(t, i, P, old[i], new Uint8Array(0), [h]));
   assert(ms[0].verifyDer(M.NID_secp256k1, oldPub, h, s[0]), "old key sig");
+  // refreshing the upgraded keyset keeps the root and the derived key
+  const ksR = await both(ms, (m, t, i) => m.hdEcdsa2pRefresh(t, i, P, ks[i]));
+  assert(hex(ms[0].hdEcdsa2pKeysetInfo(ksR[0]).publicKey) === hex(oldPub), "upgraded root changed on refresh");
+  const [kr0, kr1] = await both(ms, (m, t, i) => m.hdEcdsa2pDerive(t, i, P, ksR[i], BIP44_BTC, [[0, 3]]));
+  assert(hex(ms[0].ecdsa2pKeyInfo(kr0[0]).publicKey) === hex(pub), "derived key changed after refreshing upgraded keyset");
+  [s] = await both(ms, (m, t, i) => m.ecdsa2pSign(t, i, P, i ? kr1[0] : kr0[0], new Uint8Array(0), [h]));
+  assert(ms[0].verifyDer(M.NID_secp256k1, pub, h, s[0]), "sig with refreshed upgraded keyset");
   // the node from an upgraded keyset is a valid xpub too
   const [n] = await both(ms, (m, t, i) => m.hdEcdsa2pAccountNode(t, i, P, ks[i], BIP44_BTC));
   const child = new HDKey({ publicKey: n.publicKey, chainCode: n.chainCode }).deriveChild(0).deriveChild(3);
@@ -144,6 +151,8 @@ await check("upgrade with shares of two different keys is rejected", async () =>
   const b = await both(ms, (m, t, i) => m.ecdsa2pDkg(t, i, P, M.NID_secp256k1));
   await expectThrow(() => both(ms, (m, t, i) => m.hdEcdsa2pFromKey(t, i, P, i ? b[1] : a[0])), M.CbMpcError);
 });
+
+const ecKsSid = await both(ms, (m, t, i) => m.hdEcdsa2pDkg(t, i, P, M.NID_secp256k1));
 
 // ---------------------------------------------------------------- EdDSA ----
 let eks: any[] = [];
@@ -163,7 +172,7 @@ await check("Ed25519: keyset DKG, derive, sign + verify (node:crypto)", async ()
   assert(pubs.size === 3, "not distinct");
   const [n] = await both(ms, (m, t, i) => m.hdEddsa2pAccountNode(t, i, P, eks[i], SOL));
   const nodeKey = ms[0].ecKey2pInfo(k0[2]).publicKey; // empty path = node
-  assert(hex(n.publicKey).endsWith(hex(edEncode(nodeKey))) || hex(n.publicKey) === hex(compress(nodeKey)), `ed node != derive([]): ${hex(n.publicKey)}`);
+  assert(n.publicKey.length === 32 && hex(n.publicKey) === hex(edEncode(nodeKey)), `ed node != derive([]): ${hex(n.publicKey)}`);
 });
 
 await check("Ed25519: refresh + serialize keep keys", async () => {
@@ -184,6 +193,21 @@ await check("Ed25519: upgrade existing EdDSA-2P key", async () => {
   const msg = new TextEncoder().encode("upgraded");
   const [sig] = await both(ms, (m, t, i) => m.schnorr2pEddsaSign(t, i, P, i ? k1[0] : k0[0], msg));
   assert(edVerify(edEncode(ms[0].ecKey2pInfo(k0[0]).publicKey), msg, sig), "sig");
+  const ksR = await both(ms, (m, t, i) => m.hdEddsa2pRefresh(t, i, P, ks[i]));
+  const [r0, r1] = await both(ms, (m, t, i) => m.hdEddsa2pDerive(t, i, P, ksR[i], SOL, [[4]]));
+  assert(hex(ms[0].ecKey2pInfo(r0[0]).publicKey) === hex(ms[0].ecKey2pInfo(k0[0]).publicKey), "derived changed after refresh");
+  const [sig2] = await both(ms, (m, t, i) => m.schnorr2pEddsaSign(t, i, P, i ? r1[0] : r0[0], msg));
+  assert(edVerify(edEncode(ms[0].ecKey2pInfo(r0[0]).publicKey), msg, sig2), "sig after refresh of upgraded keyset");
+});
+
+await check("explicit session id (same on both sides) for derive and account node", async () => {
+  const sid = sha("caller-chosen session id");
+  const [a0] = await both(ms, (m, t, i) => m.hdEcdsa2pDerive(t, i, P, ecKsSid[i], BIP44_BTC, [[0, 2]], sid));
+  const [b0] = await both(ms, (m, t, i) => m.hdEcdsa2pDerive(t, i, P, ecKsSid[i], BIP44_BTC, [[0, 2]]));
+  assert(hex(ms[0].ecdsa2pKeyInfo(a0[0]).publicKey) === hex(ms[0].ecdsa2pKeyInfo(b0[0]).publicKey), "sid changed the derived key");
+  const [n1] = await both(ms, (m, t, i) => m.hdEcdsa2pAccountNode(t, i, P, ecKsSid[i], BIP44_BTC, sid));
+  const [n2] = await both(ms, (m, t, i) => m.hdEcdsa2pAccountNode(t, i, P, ecKsSid[i], BIP44_BTC));
+  assert(hex(n1.publicKey) === hex(n2.publicKey) && hex(n1.chainCode) === hex(n2.chainCode), "sid changed the node");
 });
 
 // ---------------------------------------------------------------- errors ----

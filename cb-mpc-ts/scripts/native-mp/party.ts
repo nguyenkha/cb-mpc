@@ -75,6 +75,14 @@ self.onmessage = async (ev: MessageEvent) => {
         out.node = await mpc.hdEcdsa2pAccountNode(t, idx, names, ks, scenario.hardened);
         break;
       }
+      case "hdsign_ed": {
+        const ks = mpc.deserializeHdEddsa2p(scenario.keysets[idx]);
+        const [key] = await mpc.hdEddsa2pDerive(t, idx, names, ks, scenario.hardened, [scenario.path]);
+        out.pub = mpc.ecKey2pInfo(key).publicKey;
+        out.sig = await mpc.schnorr2pEddsaSign(t, idx, names, key, msg);
+        out.node = await mpc.hdEddsa2pAccountNode(t, idx, names, ks, scenario.hardened);
+        break;
+      }
       case "loadsign": {
         // Load a serialized ECDSA-2P key (e.g. made by another version) and sign.
         const key = mpc.deserializeEcdsa2p(scenario.keys[idx]);

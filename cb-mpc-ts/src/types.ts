@@ -230,7 +230,7 @@ export interface HdKeysetInfo {
  * standard; the node is only meaningful with this library.
  */
 export interface HdAccountNode {
-  /** Compressed public key of the node (33 bytes for secp256k1 / P-256). */
+  /** Public key of the node: 33-byte compressed for secp256k1 / P-256, 32-byte standard encoding for Ed25519. */
   publicKey: Uint8Array;
   /** 32-byte chain code. */
   chainCode: Uint8Array;

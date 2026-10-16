@@ -34,7 +34,8 @@
     "demo:pve-backup": "bun run examples/pve-backup.ts",
     "demo:ac-reshare": "bun run examples/ac-reshare.ts",
     "demo:hd-keyset": "bun run examples/hd-keyset.ts",
-    "demo:hd-bitcoin-wallet": "bun run examples/hd-bitcoin-wallet.ts"
+    "demo:hd-bitcoin-wallet": "bun run examples/hd-bitcoin-wallet.ts",
+    "test:hd": "node --experimental-strip-types scripts/hd.ts"
   },
   "devDependencies": {
     "@noble/curves": "^1.9.1",
