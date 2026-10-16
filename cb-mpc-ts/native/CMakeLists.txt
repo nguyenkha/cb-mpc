@@ -135,6 +135,10 @@ else()
   set(INSTALL_PLATFORM "unknown")
 endif()
 
+# e.g. "-musl" for the Alpine build (prebuilds/linux-x64-musl/)
+set(CBMPC_PREBUILD_SUFFIX "" CACHE STRING "Suffix for the prebuilds/<platform> directory")
+set(INSTALL_PLATFORM "${INSTALL_PLATFORM}${CBMPC_PREBUILD_SUFFIX}")
+
 add_custom_command(TARGET cbmpc POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory "${PREBUILD_DIR}/${INSTALL_PLATFORM}"
   COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:cbmpc>" "${PREBUILD_DIR}/${INSTALL_PLATFORM}/"

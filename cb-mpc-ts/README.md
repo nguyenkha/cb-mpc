@@ -37,6 +37,27 @@ For native performance on Node.js, also install koffi:
 npm install koffi
 ```
 
+### Backends and platforms
+
+| Init | Backend |
+|---|---|
+| `initCbMpc()` | always WASM (browsers, Node.js, Bun, Deno, any OS) |
+| `initCbMpcBunFfi()` | native via `bun:ffi` (Bun only) |
+| `initCbMpcKoffi()` | native via koffi (Node.js or Bun; needs `npm install koffi`) |
+| `initCbMpcAuto()` | Bun: `bun:ffi`, then koffi, then WASM. Node.js: koffi if installed, else WASM |
+
+Native prebuilds shipped in the package:
+
+| Prebuild | Runs on |
+|---|---|
+| `linux-x64`, `linux-arm64` | glibc >= 2.28: Debian 10+, Ubuntu 18.10+, RHEL/Alma/Rocky 8+, Amazon Linux 2023, Fedora 29+ |
+| `linux-x64-musl`, `linux-arm64-musl` | Alpine (musl), e.g. `node:*-alpine`, `oven/bun:*-alpine` |
+| `darwin-arm64` | macOS 11+ on Apple Silicon |
+
+The Linux libraries need only the C library (the C++ runtime is linked in).
+`linux-arm64` needs ARMv8 Crypto Extensions (AWS Graviton, Ampere, Raspberry Pi 5;
+not Raspberry Pi 4). Other platforms (Windows, Intel macOS, 32-bit) use WASM.
+
 ## Quick Start
 
 ```typescript

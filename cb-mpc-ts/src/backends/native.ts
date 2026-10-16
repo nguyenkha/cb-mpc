@@ -12,6 +12,7 @@
 import type { CbMpcModule } from "../module.js";
 import type { DataTransport } from "../types.js";
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
 // FFI library abstraction
@@ -364,10 +365,29 @@ export interface SyncDataTransport extends DataTransport {
 // Library path resolution
 // ---------------------------------------------------------------------------
 
+/** True on musl-based Linux (Alpine), which needs the linux-<arch>-musl prebuild. */
+function isMuslLinux(): boolean {
+  if (process.platform !== "linux") return false;
+  const loader = process.arch === "arm64" ? "/lib/ld-musl-aarch64.so.1" : "/lib/ld-musl-x86_64.so.1";
+  try {
+    if (existsSync(loader)) return true;
+  } catch {
+    // fall through to the report check
+  }
+  try {
+    const header = (process as any).report?.getReport?.()?.header;
+    if (header) return !header.glibcVersionRuntime;
+  } catch {
+    // no report support: assume glibc
+  }
+  return false;
+}
+
 export function getLibraryPath(): string {
   const platform = process.platform === "darwin" ? "darwin" : "linux";
   const arch = process.arch === "arm64" ? "arm64" : "x64";
   const ext = platform === "darwin" ? "dylib" : "so";
+  const variant = isMuslLinux() ? "-musl" : "";
   // import.meta.url works in Node ESM, Bun and bundlers (no __dirname in ESM).
-  return fileURLToPath(new URL(`../../prebuilds/${platform}-${arch}/libcbmpc.${ext}`, import.meta.url));
+  return fileURLToPath(new URL(`../../prebuilds/${platform}-${arch}${variant}/libcbmpc.${ext}`, import.meta.url));
 }

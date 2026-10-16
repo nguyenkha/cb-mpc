@@ -8,7 +8,8 @@ import { resolve, join } from "node:path";
 import { existsSync } from "node:fs";
 
 const pkg = resolve(process.argv[2] || ".");
-const platform = `${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
+const musl = process.platform === "linux" && existsSync(process.arch === "arm64" ? "/lib/ld-musl-aarch64.so.1" : "/lib/ld-musl-x86_64.so.1");
+const platform = `${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}${musl ? "-musl" : ""}`;
 const lib = join(pkg, "prebuilds", platform, `libcbmpc.${process.platform === "darwin" ? "dylib" : "so"}`);
 if (!existsSync(lib)) {
   console.error(`FAIL: no prebuild for ${platform} at ${lib}`);

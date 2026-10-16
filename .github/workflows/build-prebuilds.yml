@@ -38,6 +38,13 @@ jobs:
             platform: linux-x64
           - os: ubuntu-24.04-arm
             platform: linux-arm64
+          # Alpine / musl variants (CBMPC_LINUX_LIBC=musl, built in alpine).
+          - os: ubuntu-latest
+            platform: linux-x64-musl
+            libc: musl
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64-musl
+            libc: musl
           - os: macos-14
             platform: darwin-arm64
             openssl_script: scripts/openssl/build-static-openssl-macos-m1.sh
@@ -57,6 +64,8 @@ jobs:
 
       - name: Build native shared library (Linux, manylinux_2_28 container)
         if: runner.os == 'Linux'
+        env:
+          CBMPC_LINUX_LIBC: ${{ matrix.libc || 'glibc' }}
         run: bash cb-mpc-ts/scripts/build-linux-prebuild.sh
 
       - name: Build OpenSSL (macOS)
@@ -84,7 +93,7 @@ jobs:
           ls -lh cb-mpc-ts/prebuilds/${{ matrix.platform }}/
           file cb-mpc-ts/prebuilds/${{ matrix.platform }}/libcbmpc.*
           if [ "${{ runner.os }}" = "Linux" ]; then
-            bash cb-mpc-ts/scripts/check-linux-prebuild.sh cb-mpc-ts/prebuilds/${{ matrix.platform }}/libcbmpc.so
+            CBMPC_LIBC=${{ matrix.libc || 'glibc' }} bash cb-mpc-ts/scripts/check-linux-prebuild.sh cb-mpc-ts/prebuilds/${{ matrix.platform }}/libcbmpc.so
           else
             otool -l cb-mpc-ts/prebuilds/${{ matrix.platform }}/libcbmpc.dylib | grep -A3 LC_BUILD_VERSION
           fi
@@ -212,6 +221,10 @@ jobs:
             image: node:22-bookworm
           - os: ubuntu-24.04-arm
             image: node:22-bookworm
+          - os: ubuntu-latest
+            image: node:22-alpine
+          - os: ubuntu-24.04-arm
+            image: node:22-alpine
     runs-on: ${{ matrix.os }}
     name: Smoke ${{ matrix.image }} (${{ matrix.os }})
     steps:
@@ -231,7 +244,7 @@ jobs:
       - name: Load native library in ${{ matrix.image }}
         run: |
           docker run --rm -v "$PWD/pkg":/pkg -v "$PWD/cb-mpc-ts/scripts":/scripts -w /pkg ${{ matrix.image }} \
-            bash -c 'npm install --no-save --no-audit --no-fund koffi debug >/dev/null && node /scripts/native-smoke.mjs /pkg'
+            sh -c 'npm install --no-save --no-audit --no-fund koffi debug >/dev/null && node /scripts/native-smoke.mjs /pkg'
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')

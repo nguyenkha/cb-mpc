@@ -6,6 +6,7 @@
 set -euo pipefail
 MAX_GLIBC=${MAX_GLIBC:-2.28}
 status=0
+LIBC=${CBMPC_LIBC:-glibc}
 for so in "$@"; do
   echo "== $so"
   needed=$(objdump -p "$so" | awk '/NEEDED/ {print $2}' | tr '\n' ' ')
@@ -15,6 +16,11 @@ for so in "$@"; do
   fi
   if objdump -T "$so" | grep -qE 'GLIBCXX_|CXXABI_'; then
     echo "   FAIL: GLIBCXX/CXXABI symbol versions present"; status=1
+  fi
+  if [ "$LIBC" = musl ]; then
+    # musl has no symbol versioning; just require the musl loader and no glibc.
+    if grep -q 'libc.so.6' <<<"$needed"; then echo "   FAIL: links glibc"; status=1; fi
+    continue
   fi
   max=$(objdump -T "$so" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)*' | sed 's/GLIBC_//' | sort -V | tail -1)
   echo "   max GLIBC: ${max:-none} (allowed <= $MAX_GLIBC)"
