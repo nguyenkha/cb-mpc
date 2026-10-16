@@ -36,3 +36,7 @@ cb-mpc-ts/src/*.js
 
 # Internal tool outputs for human review
 internal_tools/doc-generator/pdf-diffs/
+
+# Rust crates (rust/)
+rust/target/
+rust/interop/node_modules/

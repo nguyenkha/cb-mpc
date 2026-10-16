@@ -1,0 +1,9 @@
+{
+  "name": "cbmpc-rust-interop",
+  "private": true,
+  "description": "cb-mpc-ts client (npm release) that the Rust interop test drives over stdio",
+  "dependencies": {
+    "@noble/curves": "2.0.1",
+    "cb-mpc": "0.6.2"
+  }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "cbmpc"
+description = "Safe Rust API for cb-mpc 2-party ECDSA / EdDSA, byte-compatible with cb-mpc-ts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+cbmpc-sys = { path = "../cbmpc-sys" }
+libc = "0.2"
+zeroize = "1.8"
+
+[dev-dependencies]
+libc = "0.2"
