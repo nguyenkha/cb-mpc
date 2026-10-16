@@ -8,10 +8,18 @@ name: Native release artifacts
 # Each linux/macOS artifact is verified by running the Rust crates' tests against it (incl. the
 # cb-mpc-ts interop test and, on Linux, MemoryDenyWriteExecute). Then SHA256SUMS + build provenance
 # attestations; on a v* tag the files are uploaded to that tag's GitHub Release (a draft is created
-# if none exists, for a maintainer to publish). workflow_dispatch = dry run: artifacts on the run only.
+# if none exists, for a maintainer to publish). Pull requests touching the build and
+# workflow_dispatch are dry runs: artifacts on the run only, no attestation, no release.
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - "scripts/native-artifacts/**"
+      - "scripts/openssl/**"
+      - "cb-mpc-ts/native/**"
+      - "rust/cbmpc-sys/**"
+      - ".github/workflows/native-release.yml"
   workflow_dispatch:
 
 permissions:
@@ -142,6 +150,7 @@ jobs:
           sha256sum cbmpc-native-* > SHA256SUMS
           cat SHA256SUMS
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
           subject-path: dist/cbmpc-native-*
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
