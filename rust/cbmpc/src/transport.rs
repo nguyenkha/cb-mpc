@@ -3,7 +3,7 @@
 // channel fed by an HTTP handler) and returns an error to abort the run (timeout, cancel).
 // Callbacks never let a Rust panic unwind into C++: it is caught and turned into a transport error.
 
-use crate::error::{check, Error, Result, TRANSPORT_PANIC};
+use crate::error::{check, Error, Result, ROLE_MISMATCH, TRANSPORT_PANIC};
 use crate::mem::malloc_copy;
 use cbmpc_sys::{
     cmem_t, cmems_t, data_transport_callbacks_t, job_2p_ref, NETWORK_ERROR, NETWORK_MEMORY_ERROR,
@@ -19,6 +19,8 @@ pub struct TransportError;
 
 /// One party's view of the network. Party indices are 0 and 1 (`Party`).
 pub trait Transport {
+    /// Protocol messages can carry secret sub-shares: an implementation that buffers `message`
+    /// should keep its copy in `Zeroizing`.
     fn send(&mut self, receiver: i32, message: &[u8]) -> std::result::Result<(), TransportError>;
     /// Blocks until the message from `sender` arrives. Messages may carry secret sub-shares; the
     /// returned buffer is copied into library memory and then dropped.
@@ -104,11 +106,18 @@ unsafe extern "C" fn receive_all_cb(
                 Err(_) => return NETWORK_ERROR,
             }
         }
-        let flat: Zeroizing<Vec<u8>> =
+        let mut flat: Zeroizing<Vec<u8>> =
             Zeroizing::new(msgs.iter().flat_map(|m| m.iter().copied()).collect());
+        if flat.is_empty() {
+            flat.push(0); // never hand out NULL data: a 1-byte sentinel, sizes still say 0
+        }
         let (data, ok) = malloc_copy(&flat);
         let sizes = libc::malloc(std::mem::size_of::<c_int>() * senders.len().max(1)) as *mut c_int;
         if !ok || sizes.is_null() {
+            if !data.data.is_null() {
+                // The copy may hold secret sub-shares: wipe before free.
+                std::ptr::write_bytes(data.data, 0, data.size as usize);
+            }
             libc::free(data.data.cast());
             libc::free(sizes.cast());
             return NETWORK_MEMORY_ERROR;
@@ -134,7 +143,10 @@ static CALLBACKS: data_transport_callbacks_t = data_transport_callbacks_t {
 /// A 2-party job bound to one transport for its lifetime. Not `Send`: a run stays on its thread.
 pub struct Job2p<'a> {
     raw: *mut job_2p_ref,
-    ctx: Box<Ctx<'a>>,
+    /// From `Box::into_raw`; the library holds this pointer, so it is only turned back into a Box
+    /// in Drop, after the job is freed.
+    ctx: *mut Ctx<'a>,
+    party: Party,
 }
 
 impl<'a> Job2p<'a> {
@@ -149,34 +161,43 @@ impl<'a> Job2p<'a> {
             CString::new(names[1]).map_err(|_| err)?,
         ];
         let ptrs = [c_names[0].as_ptr(), c_names[1].as_ptr()];
-        let mut ctx = Box::new(Ctx {
+        let ctx = Box::into_raw(Box::new(Ctx {
             transport,
             panicked: false,
-        });
-        // SAFETY: callbacks are 'static; ctx is boxed (stable address) and outlives the job (dropped
-        // after it in Drop order below); the library copies the names.
+        }));
+        // SAFETY: callbacks are 'static; ctx stays valid until Drop frees it after the job; the
+        // library copies the names.
         let raw = unsafe {
-            cbmpc_sys::new_job_2p(
-                &CALLBACKS,
-                (&mut *ctx as *mut Ctx).cast(),
-                party as c_int,
-                ptrs.as_ptr(),
-                2,
-            )
+            cbmpc_sys::new_job_2p(&CALLBACKS, ctx.cast(), party as c_int, ptrs.as_ptr(), 2)
         };
         if raw.is_null() {
+            // SAFETY: the library did not keep ctx.
+            drop(unsafe { Box::from_raw(ctx) });
             return Err(err);
         }
-        Ok(Self { raw, ctx })
+        Ok(Self { raw, ctx, party })
     }
 
     pub(crate) fn raw(&mut self) -> *mut job_2p_ref {
         self.raw
     }
 
+    /// Refuses a key whose role is not this job's party (the protocol would only fail later).
+    pub(crate) fn check_role(&self, op: &'static str, role_index: i32) -> Result<()> {
+        if role_index == self.party as i32 {
+            Ok(())
+        } else {
+            Err(Error {
+                op,
+                code: ROLE_MISMATCH,
+            })
+        }
+    }
+
     /// The status of a protocol call, reporting a caught callback panic as such.
     pub(crate) fn finish(&mut self, op: &'static str, rv: c_int) -> Result<()> {
-        if std::mem::take(&mut self.ctx.panicked) {
+        // SAFETY: ctx is live for the job's lifetime and no callback runs outside a protocol call.
+        if std::mem::take(unsafe { &mut (*self.ctx).panicked }) {
             return Err(Error {
                 op,
                 code: TRANSPORT_PANIC,
@@ -188,7 +209,10 @@ impl<'a> Job2p<'a> {
 
 impl Drop for Job2p<'_> {
     fn drop(&mut self) {
-        // SAFETY: raw came from new_job_2p and is freed once; ctx is still alive here.
-        unsafe { cbmpc_sys::free_job_2p(self.raw) };
+        // SAFETY: raw came from new_job_2p and is freed once; then ctx (from Box::into_raw) once.
+        unsafe {
+            cbmpc_sys::free_job_2p(self.raw);
+            drop(Box::from_raw(self.ctx));
+        }
     }
 }

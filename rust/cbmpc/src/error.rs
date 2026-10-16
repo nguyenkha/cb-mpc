@@ -12,6 +12,8 @@ pub struct Error {
 pub const TRANSPORT_PANIC: i32 = -0x7000_0001;
 /// The code used when an input is too large for the C ABI's `int` sizes.
 pub const TOO_LARGE: i32 = -0x7000_0002;
+/// The code used when a key's role is not the job's party (e.g. a P1 share on a P2 job).
+pub const ROLE_MISMATCH: i32 = -0x7000_0003;
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

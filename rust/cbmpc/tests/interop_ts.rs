@@ -82,6 +82,13 @@ fn spawn_client() -> Option<Pipe> {
         }
     };
     let (stdin, stdout) = (child.stdin.take().unwrap(), child.stdout.take().unwrap());
+    // Watchdog: a hung client must not hold the test (and CI) until the job timeout.
+    let pid = child.id() as libc::pid_t;
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(300));
+        // SAFETY: plain signal to our own child; harmless if it already exited.
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    });
     Some(Pipe {
         child,
         stdin,
@@ -96,8 +103,12 @@ fn ecdsa_sign(p: &mut Pipe, key: &Ecdsa2pKey) {
     p.send_control(&sid);
     hashes.iter().for_each(|h| p.send_control(h));
     let mut job = Job2p::new(p, Party::P2, NAMES).unwrap();
-    key.sign(&mut job, &sid, &[&hashes[0], &hashes[1]]).unwrap();
+    let mine = key.sign(&mut job, &sid, &[&hashes[0], &hashes[1]]).unwrap();
     drop(job);
+    assert!(
+        mine.len() == 2 && mine.iter().all(|s| s.is_empty()),
+        "P2 gets empty placeholders"
+    );
     let pk = key.public_key().unwrap();
     for h in &hashes {
         assert!(
@@ -114,6 +125,19 @@ fn eddsa_sign(p: &mut Pipe, key: &EcKey2p) {
     key.eddsa_sign(&mut job, msg).unwrap();
     drop(job);
     assert_eq!(p.control().len(), 64); // the client verified it with @noble/curves
+}
+
+/// Sends this side's serialized server share to the client, which must load it (cb-mpc-ts
+/// deserialize), get the same public key and re-serialize it byte for byte (recovery mode loads
+/// the server share in the browser).
+fn send_parts(p: &mut Pipe, parts: &[Zeroizing<Vec<u8>>]) {
+    p.send_control(&[parts.len() as u8]);
+    parts.iter().for_each(|x| p.send_control(x));
+    assert_eq!(
+        p.control(),
+        [1],
+        "the ts client did not load the Rust share"
+    );
 }
 
 /// Reads `n` parts sent by the client and checks they load and re-serialize byte for byte.
@@ -135,6 +159,7 @@ fn rust_server_party_interoperates_with_cb_mpc_ts_0_6_2() {
         ecdsa.public_key().unwrap(),
         "ECDSA joint public key differs"
     );
+    send_parts(&mut p, &ecdsa.serialize().unwrap());
     ecdsa_sign(&mut p, &ecdsa);
 
     // 3-4. EdDSA-2P DKG + sign.
@@ -146,6 +171,7 @@ fn rust_server_party_interoperates_with_cb_mpc_ts_0_6_2() {
         eddsa.public_key().unwrap(),
         "EdDSA joint public key differs"
     );
+    send_parts(&mut p, &eddsa.serialize().unwrap());
     eddsa_sign(&mut p, &eddsa);
 
     // 5. Server shares written by cb-mpc-ts load here unchanged and sign with the ts client.

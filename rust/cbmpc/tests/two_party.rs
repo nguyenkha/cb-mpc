@@ -43,9 +43,9 @@ fn ecdsa_dkg_batch_sign_and_reload() {
     for (sig, h) in s1.iter().zip(&hashes) {
         assert!(verify_der(NID_SECP256K1, &pubkey, h, sig).unwrap());
     }
-    for (sig, h) in s2.iter().zip(&hashes) {
-        assert!(sig.is_empty() || verify_der(NID_SECP256K1, &pubkey, h, sig).unwrap());
-    }
+    // P2 gets empty placeholders, one per hash (cb-mpc hands the signatures to P1 only).
+    assert_eq!(s2.len(), 2);
+    assert!(s2.iter().all(|s| s.is_empty()));
 }
 
 #[test]
@@ -89,6 +89,18 @@ fn pve_round_trip_on_the_server_share() {
             .collect::<Vec<_>>()
     };
     assert_eq!(trim(&xs[0]), trim(&x2));
+}
+
+#[test]
+fn a_key_used_on_the_other_partys_job_is_refused_before_the_protocol() {
+    let (k1, _) = ecdsa_pair();
+    let mut t = Closed;
+    let mut job = Job2p::new(&mut t, Party::P2, common::NAMES).unwrap();
+    let err = k1
+        .sign(&mut job, &[0u8; 32], &[&[1u8; 32][..]])
+        .err()
+        .unwrap();
+    assert_eq!(err.code, cbmpc::ROLE_MISMATCH);
 }
 
 #[test]

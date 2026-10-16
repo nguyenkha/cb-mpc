@@ -8,6 +8,8 @@
 //! - Secret bytes (serialized parts, x shares, PVE decryption keys) come back as `Zeroizing`
 //!   buffers, and the library's own copies are wiped before they are freed.
 //! - A protocol call blocks on its `Transport`: run each session on its own thread.
+//! - `cbmpc-sys` links its own static OpenSSL 3.6.4 (libcrypto). Do not combine it with
+//!   `openssl-sys` in the same binary (use rustls for TLS); two libcrypto copies would mix symbols.
 //!
 //! ```no_run
 //! use cbmpc::{Ecdsa2pKey, Job2p, Party, NID_SECP256K1};
@@ -29,6 +31,6 @@ mod transport;
 pub use curve::{verify_der, Curve, Point, NID_ED25519, NID_SECP256K1, NID_X9_62_PRIME256V1};
 pub use ecdsa2p::Ecdsa2pKey;
 pub use eckey2p::EcKey2p;
-pub use error::{Error, Result, TOO_LARGE, TRANSPORT_PANIC};
+pub use error::{Error, Result, ROLE_MISMATCH, TOO_LARGE, TRANSPORT_PANIC};
 pub use transport::{Job2p, Party, Transport, TransportError};
 pub use zeroize::Zeroizing;

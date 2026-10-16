@@ -34,6 +34,7 @@ impl EcKey2p {
 
     /// Schnorr-2P EdDSA signature over the whole `message` (cb-mpc-ts `schnorr2pEddsaSign`).
     pub fn eddsa_sign(&self, job: &mut Job2p<'_>, message: &[u8]) -> Result<Vec<u8>> {
+        job.check_role("mpc_schnorr2p_eddsa_sign", self.role_index()?)?;
         let mut sig = cmem_t {
             data: std::ptr::null_mut(),
             size: 0,

@@ -34,9 +34,10 @@ impl Ecdsa2pKey {
     }
 
     /// Signs all `hashes` in one session (`sign_batch`, same as cb-mpc-ts `ecdsa2pSign`) with the
-    /// shared session id `sid`. Returns the DER signatures this party ends with (the kexify server,
-    /// P2, returns them to the API today).
+    /// shared session id `sid`. P1 receives the DER signatures; P2 gets empty placeholders (one per
+    /// hash), exactly as with cb-mpc-ts.
     pub fn sign(&self, job: &mut Job2p<'_>, sid: &[u8], hashes: &[&[u8]]) -> Result<Vec<Vec<u8>>> {
+        job.check_role("mpc_ecdsa2p_sign", self.role_index()?)?;
         let mut msgs = CmemsIn::new("mpc_ecdsa2p_sign", hashes)?;
         let mut sigs = cmems_t {
             count: 0,

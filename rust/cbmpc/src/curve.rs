@@ -72,8 +72,10 @@ impl Point {
     }
 
     /// `0x04 || X || Y` exactly as cb-mpc-ts `pointToSec1` builds it: both coordinates left-padded to
-    /// the longer of their two minimal big-endian lengths (so it is not always 32 bytes each).
-    /// kexify stores and compares public keys in this form.
+    /// the longer of their two minimal big-endian lengths, so it is not always 32 bytes each (63
+    /// bytes when both coordinates start with 0x00, about 1 key in 65536). kexify stores and
+    /// compares public keys in this form, so it must stay byte-identical to cb-mpc-ts; it is not a
+    /// strict SEC1 encoding.
     pub fn to_sec1_like_ts(&self) -> Result<Vec<u8>> {
         let x = self.read("ecc_point_get_x", cbmpc_sys::ecc_point_get_x)?;
         let y = self.read("ecc_point_get_y", cbmpc_sys::ecc_point_get_y)?;

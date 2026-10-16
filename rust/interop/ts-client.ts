@@ -76,14 +76,39 @@ async function eddsaSign(mpc: Awaited<ReturnType<typeof initCbMpc>>, eddsa: any)
 
 const mpc = await initCbMpc();
 
+const eq = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/** Loads the server share Rust made (as recovery mode loads it in the browser): same public key,
+ *  server role, and byte-identical re-serialization. Replies [1]. */
+async function loadRustShare(publicKey: Uint8Array, kind: "ecdsa" | "eddsa") {
+  const n = (await readControl())[0];
+  const parts: Uint8Array[] = [];
+  for (let i = 0; i < n; i++) parts.push(await readControl());
+  const lib = await initCbMpc();
+  if (kind === "ecdsa") {
+    const k = lib.deserializeEcdsa2p(parts);
+    const info = lib.ecdsa2pKeyInfo(k);
+    assert(eq(info.publicKey, publicKey) && info.roleIndex === 1, "rust ecdsa share info");
+    assert(lib.serializeEcdsa2p(k).every((p, i) => eq(p, parts[i])), "rust ecdsa share re-serializes");
+  } else {
+    const k = lib.deserializeEcKey2p(parts);
+    const info = lib.ecKey2pInfo(k);
+    assert(eq(info.publicKey, publicKey) && info.roleIndex === 1, "rust eddsa share info");
+    assert(lib.serializeEcKey2p(k).every((p, i) => eq(p, parts[i])), "rust eddsa share re-serializes");
+  }
+  control(new Uint8Array([1]));
+}
+
 // 1-2. ECDSA-2P DKG against Rust, then a 2-hash batch sign.
 const ecdsa = await mpc.ecdsa2pDkg(pipe, 0, NAMES, NID_secp256k1);
 control(mpc.ecdsa2pKeyInfo(ecdsa).publicKey);
+await loadRustShare(mpc.ecdsa2pKeyInfo(ecdsa).publicKey, "ecdsa");
 await ecdsaSign(mpc, ecdsa);
 
 // 3-4. EdDSA-2P (Schnorr) DKG against Rust, then a sign.
 const eddsa = await mpc.ecKey2pDkg(pipe, 0, NAMES, NID_ED25519);
 control(mpc.ecKey2pInfo(eddsa).publicKey);
+await loadRustShare(mpc.ecKey2pInfo(eddsa).publicKey, "eddsa");
 await eddsaSign(mpc, eddsa);
 
 // 5. Keys made entirely by cb-mpc-ts (both parties here): hand the server parts to Rust, which
