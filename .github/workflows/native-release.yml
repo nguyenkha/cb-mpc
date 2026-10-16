@@ -126,8 +126,25 @@ jobs:
           CBMPC_REQUIRE_MDWE: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: cargo test --locked
 
+  # The xcframework must link for both slices (no unresolved symbols) before it can be published.
+  verify-ios:
+    needs: ios
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.12.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: native-ios
+          path: ios-artifact
+      - run: bash scripts/native-artifacts/check-ios-xcframework.sh ios-artifact/cbmpc-native-ios.xcframework.zip
+
   publish:
-    needs: [verify, ios]
+    needs: [verify, verify-ios]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -163,7 +180,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
-            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
-                 --title "$TAG" --notes "Native artifacts for $TAG (see SHA256SUMS; verify with gh attestation verify)."
+          # Only ever write to a draft: a published release's assets are never replaced.
+          if draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
+            [ "$draft" = "true" ] || { echo "release $TAG is already published; refusing to replace its assets" >&2; exit 1; }
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+              --title "$TAG" --notes "Native artifacts for $TAG (see SHA256SUMS; verify with gh attestation verify)."
+          fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber dist/cbmpc-native-* dist/SHA256SUMS

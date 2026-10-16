@@ -82,30 +82,32 @@ fn artifact_dirs(dir: &Path) -> (PathBuf, PathBuf) {
     let lib = dir.join("lib");
     for f in ["libcbmpc.a", "libcrypto.a"] {
         assert!(lib.join(f).exists(), "{} has no lib/{f}", dir.display());
+        // Relink when a library at the same path is replaced.
+        println!("cargo:rerun-if-changed={}", lib.join(f).display());
     }
     (lib.clone(), lib)
 }
 
-/// Downloads cbmpc-native-<platform>.tar.gz of PREBUILT_TAG into OUT_DIR, checks its sha256 and
-/// unpacks it. Uses the system `curl` and `tar` (no network crates in the build).
+/// Downloads cbmpc-native-<platform>.tar.gz of PREBUILT_TAG into OUT_DIR (once), checks its sha256
+/// and unpacks it fresh on every build, so what is linked always comes from the verified tarball.
+/// Uses the system `curl` and `tar` (no network crates in the build).
 fn download(platform: &str, sha256: &str) -> PathBuf {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let name = format!("cbmpc-native-{platform}");
     let tarball = out.join(format!("{name}.tar.gz"));
     let dir = out.join(&name);
-    if dir.join("lib/libcbmpc.a").exists() && file_sha256(&tarball).as_deref() == Some(sha256) {
-        return dir;
-    }
     let url = format!("{PREBUILT_BASE_URL}/{PREBUILT_TAG}/{name}.tar.gz");
-    let status = Command::new("curl")
-        .args(["-fsSL", "--retry", "3", "-o"])
-        .arg(&tarball)
-        .arg(&url)
-        .status();
-    assert!(
-        matches!(status, Ok(s) if s.success()),
-        "cbmpc-sys: downloading {url} failed; build offline with CBMPC_NATIVE_DIR or CBMPC_FROM_SOURCE=1"
-    );
+    if file_sha256(&tarball).as_deref() != Some(sha256) {
+        let status = Command::new("curl")
+            .args(["-fsSL", "--retry", "3", "-o"])
+            .arg(&tarball)
+            .arg(&url)
+            .status();
+        assert!(
+            matches!(status, Ok(s) if s.success()),
+            "cbmpc-sys: downloading {url} failed; build offline with CBMPC_NATIVE_DIR or CBMPC_FROM_SOURCE=1"
+        );
+    }
     let got = file_sha256(&tarball).unwrap_or_default();
     if got != sha256 {
         let _ = std::fs::remove_file(&tarball);
