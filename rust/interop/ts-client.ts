@@ -89,12 +89,14 @@ async function loadRustShare(publicKey: Uint8Array, kind: "ecdsa" | "eddsa") {
     const k = lib.deserializeEcdsa2p(parts);
     const info = lib.ecdsa2pKeyInfo(k);
     assert(eq(info.publicKey, publicKey) && info.roleIndex === 1, "rust ecdsa share info");
-    assert(lib.serializeEcdsa2p(k).every((p, i) => eq(p, parts[i])), "rust ecdsa share re-serializes");
+    const again = lib.serializeEcdsa2p(k);
+    assert(again.length === parts.length && again.every((p, i) => eq(p, parts[i])), "rust ecdsa share re-serializes");
   } else {
     const k = lib.deserializeEcKey2p(parts);
     const info = lib.ecKey2pInfo(k);
     assert(eq(info.publicKey, publicKey) && info.roleIndex === 1, "rust eddsa share info");
-    assert(lib.serializeEcKey2p(k).every((p, i) => eq(p, parts[i])), "rust eddsa share re-serializes");
+    const again = lib.serializeEcKey2p(k);
+    assert(again.length === parts.length && again.every((p, i) => eq(p, parts[i])), "rust eddsa share re-serializes");
   }
   control(new Uint8Array([1]));
 }
