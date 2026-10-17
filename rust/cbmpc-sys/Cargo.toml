@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 links = "cbmpc"
 build = "build.rs"
+# Consumed as a git dependency of this repo: the source build needs the whole checkout.
+publish = false
 
 [build-dependencies]
 cmake = "0.1.54"
+sha2 = "0.10"
