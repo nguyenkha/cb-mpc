@@ -140,7 +140,13 @@ const key = await mpc.ecKey2pDkg(transport, partyIndex, names, NID_ED25519);
 
 // Signing
 const sig = await mpc.schnorr2pEddsaSign(transport, partyIndex, names, key, message);
+
+// Key refresh (same public key, new shares)
+const newKey = await mpc.ecKey2pRefresh(transport, partyIndex, names, key);
 ```
+
+After a refresh (either curve) an old share and a new share no longer sign together, but the two old shares still do:
+delete the old shares once both parties hold the new ones.
 
 ### EdDSA Multi-Party
 

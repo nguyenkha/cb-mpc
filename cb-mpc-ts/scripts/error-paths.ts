@@ -81,6 +81,7 @@ for (const [backend, init] of [["wasm", () => M.initCbMpc()], ["native", () => M
   await expectError(`${backend}: agreeRandom bitLen=0`, () => m.agreeRandom(dead, 0, ["p0", "p1"], 0));
   // role mismatch: key belongs to P1 but we run as P2 -> cb_assert inside the protocol
   await expectError(`${backend}: ecdsa2pRefresh with key of the other role`, () => m.ecdsa2pRefresh(dead, 1, ["p0", "p1"], key0));
+  await expectError(`${backend}: ecKey2pRefresh with key of the other role`, () => m.ecKey2pRefresh(dead, 1, ["p0", "p1"], m.deserializeEcKey2p(serE)));
   await expectError(`${backend}: ecdsa2pSign with key of the other role`, () =>
     m.ecdsa2pSign(dead, 1, ["p0", "p1"], key0, new Uint8Array(0), [new Uint8Array(32)]));
   await expectError(`${backend}: deserializeEcdsa2p 5 parts`, () => m.deserializeEcdsa2p(ser0.slice(0, 5)));
