@@ -13,6 +13,7 @@ type DataTransport = { send(r: number, m: Uint8Array): Promise<number>; receive(
 
 const NAMES: [string, string] = ["client", "server"];
 const RUNS = Number(process.env.REFRESH_BENCH_RUNS ?? 3);
+if (!(RUNS >= 1)) throw new Error("REFRESH_BENCH_RUNS must be >= 1");
 const reader = Bun.stdin.stream().getReader();
 let buf = new Uint8Array(0);
 

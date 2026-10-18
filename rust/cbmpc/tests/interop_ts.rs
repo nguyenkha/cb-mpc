@@ -228,6 +228,7 @@ fn rust_server_party_refreshes_with_cb_mpc_ts() {
         return;
     }
     let runs: usize = std::env::var("REFRESH_BENCH_RUNS").map_or(3, |v| v.parse().unwrap());
+    assert!(runs >= 1, "REFRESH_BENCH_RUNS must be >= 1");
     let (sid, hash, msg) = ([0x61u8; 32], [0x33u8; 32], b"kexify refresh");
 
     // ECDSA-2P.
