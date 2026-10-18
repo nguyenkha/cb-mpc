@@ -148,7 +148,9 @@ fn read_parts(p: &mut Pipe) -> Vec<Vec<u8>> {
 
 #[test]
 fn rust_server_party_interoperates_with_cb_mpc_ts_0_6_2() {
-    let Some(mut p) = spawn_client("ts-client.ts") else { return };
+    let Some(mut p) = spawn_client("ts-client.ts") else {
+        return;
+    };
 
     // 1-2. ECDSA-2P DKG + batch sign.
     let mut job = Job2p::new(&mut p, Party::P2, NAMES).unwrap();
@@ -198,26 +200,31 @@ fn rust_server_party_interoperates_with_cb_mpc_ts_0_6_2() {
     assert!(p.child.wait().unwrap().success(), "ts client failed");
 }
 
-/// One sign over the pipe as P2 with `key`; returns whether the client (P1, which verifies) succeeded.
-fn signed_ok(p: &mut Pipe, sign: impl FnOnce(&mut Job2p) -> cbmpc::Result<()>) -> bool {
+/// One sign over the pipe as P2; returns the client's (P1, which verifies) verdict: 1 signed and
+/// verified, 0 rejected by its proof / signature check, 2 any other failure.
+fn sign_verdict(p: &mut Pipe, sign: impl FnOnce(&mut Job2p) -> cbmpc::Result<()>) -> u8 {
     let mut job = Job2p::new(p, Party::P2, NAMES).unwrap();
     // P2 sends the last message in both protocols, so its own result says nothing about the pair.
     let _ = sign(&mut job);
     drop(job);
-    p.control() == [1]
+    p.control()[0]
 }
 
 /// Refresh with ts-refresh-client.ts (P1, WASM; a local cb-mpc-ts build via CBMPC_TS_DIR until a release
 /// has ecKey2pRefresh): the key stays, new shares sign, and both old/new mixes fail, on both curves.
 #[test]
 fn rust_server_party_refreshes_with_cb_mpc_ts() {
-    let Some(mut p) = spawn_client("ts-refresh-client.ts") else { return };
+    let Some(mut p) = spawn_client("ts-refresh-client.ts") else {
+        return;
+    };
     if p.control() == b"skip" {
         assert!(
             std::env::var("CBMPC_REQUIRE_INTEROP").as_deref() != Ok("1"),
             "the ts client has no ecKey2pRefresh: set CBMPC_TS_DIR to a cb-mpc-ts build"
         );
-        eprintln!("skipping refresh interop: set CBMPC_TS_DIR to a cb-mpc-ts build with ecKey2pRefresh");
+        eprintln!(
+            "skipping refresh interop: set CBMPC_TS_DIR to a cb-mpc-ts build with ecKey2pRefresh"
+        );
         return;
     }
     let runs: usize = std::env::var("REFRESH_BENCH_RUNS").map_or(3, |v| v.parse().unwrap());
@@ -238,9 +245,21 @@ fn rust_server_party_refreshes_with_cb_mpc_ts() {
         assert_eq!(cur.role_index().unwrap(), 1);
         assert_eq!(p.control(), pk, "client public key changed by the refresh");
     }
-    assert!(signed_ok(&mut p, |j| cur.sign(j, &sid, &[&hash[..]]).map(|_| ())), "ECDSA new + new must sign");
-    assert!(!signed_ok(&mut p, |j| cur.sign(j, &sid, &[&hash[..]]).map(|_| ())), "ECDSA old client + new server must fail");
-    assert!(!signed_ok(&mut p, |j| old.sign(j, &sid, &[&hash[..]]).map(|_| ())), "ECDSA new client + old server must fail");
+    assert_eq!(
+        sign_verdict(&mut p, |j| cur.sign(j, &sid, &[&hash[..]]).map(|_| ())),
+        1,
+        "ECDSA new + new must sign"
+    );
+    assert_eq!(
+        sign_verdict(&mut p, |j| cur.sign(j, &sid, &[&hash[..]]).map(|_| ())),
+        0,
+        "ECDSA old client + new server must fail"
+    );
+    assert_eq!(
+        sign_verdict(&mut p, |j| old.sign(j, &sid, &[&hash[..]]).map(|_| ())),
+        0,
+        "ECDSA new client + old server must fail"
+    );
 
     // EdDSA-2P.
     let mut job = Job2p::new(&mut p, Party::P2, NAMES).unwrap();
@@ -257,10 +276,25 @@ fn rust_server_party_refreshes_with_cb_mpc_ts() {
         assert_eq!(cur.role_index().unwrap(), 1);
         assert_eq!(p.control(), pk, "client public key changed by the refresh");
     }
-    assert!(signed_ok(&mut p, |j| cur.eddsa_sign(j, msg).map(|_| ())), "EdDSA new + new must sign");
-    assert!(!signed_ok(&mut p, |j| cur.eddsa_sign(j, msg).map(|_| ())), "EdDSA old client + new server must fail");
-    assert!(!signed_ok(&mut p, |j| old.eddsa_sign(j, msg).map(|_| ())), "EdDSA new client + old server must fail");
+    assert_eq!(
+        sign_verdict(&mut p, |j| cur.eddsa_sign(j, msg).map(|_| ())),
+        1,
+        "EdDSA new + new must sign"
+    );
+    assert_eq!(
+        sign_verdict(&mut p, |j| cur.eddsa_sign(j, msg).map(|_| ())),
+        0,
+        "EdDSA old client + new server must fail"
+    );
+    assert_eq!(
+        sign_verdict(&mut p, |j| old.eddsa_sign(j, msg).map(|_| ())),
+        0,
+        "EdDSA new client + old server must fail"
+    );
 
     assert_eq!(p.control(), b"done");
-    assert!(p.child.wait().unwrap().success(), "ts refresh client failed");
+    assert!(
+        p.child.wait().unwrap().success(),
+        "ts refresh client failed"
+    );
 }

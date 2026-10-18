@@ -7,6 +7,8 @@ use common::{parts_ref, run_2p};
 
 const SID: [u8; 32] = [5u8; 32];
 const HASH: [u8; 32] = [7u8; 32];
+/// E_CRYPTO (ERRCODE(ECATEGORY_CRYPTO, 1)): P1's proof / signature check failed, not a transport error.
+const E_CRYPTO: i32 = 0xff04_0001_u32 as i32;
 
 /// Independent copy of a share (keys are Send, not Sync) via the serialized form.
 trait Copy2p: Sized {
@@ -63,8 +65,16 @@ fn ecdsa_refresh_keeps_the_key_and_old_new_shares_do_not_mix() {
     let sig = ecdsa_sign(ec(&n1), ec(&n2)).unwrap();
     assert!(verify_der(NID_SECP256K1, &pk, &HASH, &sig).unwrap());
 
-    assert!(ecdsa_sign(ec(&o1), ec(&n2)).is_err(), "old P1 + new P2 must fail");
-    assert!(ecdsa_sign(ec(&n1), ec(&o2)).is_err(), "new P1 + old P2 must fail");
+    assert_eq!(
+        ecdsa_sign(ec(&o1), ec(&n2)).unwrap_err().code,
+        E_CRYPTO,
+        "old P1 + new P2 must fail"
+    );
+    assert_eq!(
+        ecdsa_sign(ec(&n1), ec(&o2)).unwrap_err().code,
+        E_CRYPTO,
+        "new P1 + old P2 must fail"
+    );
 
     // A second refresh chains on the first.
     let (m1, m2) = ecdsa_refresh(n1, n2);
@@ -107,20 +117,48 @@ fn eddsa_refresh_keeps_the_key_and_old_new_shares_do_not_mix() {
     assert_ne!(*n2.x_share().unwrap(), *o2.x_share().unwrap());
 
     assert_eq!(eddsa_sign(ec(&n1), ec(&n2)).unwrap().len(), 64);
-    assert!(eddsa_sign(ec(&o1), ec(&n2)).is_err(), "old P1 + new P2 must fail");
-    assert!(eddsa_sign(ec(&n1), ec(&o2)).is_err(), "new P1 + old P2 must fail");
+    assert_eq!(
+        eddsa_sign(ec(&o1), ec(&n2)).unwrap_err().code,
+        E_CRYPTO,
+        "old P1 + new P2 must fail"
+    );
+    assert_eq!(
+        eddsa_sign(ec(&n1), ec(&o2)).unwrap_err().code,
+        E_CRYPTO,
+        "new P1 + old P2 must fail"
+    );
 
     let (m1, m2) = eddsa_refresh(n1, n2);
     assert_eq!(eddsa_sign(m1, m2).unwrap().len(), 64);
+}
+
+/// Counts sends: a refused call must not send anything.
+struct Counting(usize);
+impl cbmpc::Transport for Counting {
+    fn send(&mut self, _: i32, _: &[u8]) -> Result<(), cbmpc::TransportError> {
+        self.0 += 1;
+        Err(cbmpc::TransportError)
+    }
+    fn receive(&mut self, _: i32) -> Result<cbmpc::Zeroizing<Vec<u8>>, cbmpc::TransportError> {
+        Err(cbmpc::TransportError)
+    }
 }
 
 #[test]
 fn refresh_with_a_share_of_the_other_seat_is_refused() {
     let (e1, _) = ecdsa_dkg();
     let (d1, _) = eddsa_dkg();
-    // A P1 share on a P2 job: refused by the Rust role check before any message is sent.
-    let mut t = common::pair().0;
+    // A P1 share on a P2 job: refused by the role check before any message is sent.
+    let mut t = Counting(0);
     let mut job = Job2p::new(&mut t, cbmpc::Party::P2, common::NAMES).unwrap();
-    assert!(e1.refresh(&mut job).is_err());
-    assert!(d1.refresh(&mut job).is_err());
+    assert_eq!(
+        e1.refresh(&mut job).err().unwrap().code,
+        cbmpc::ROLE_MISMATCH
+    );
+    assert_eq!(
+        d1.refresh(&mut job).err().unwrap().code,
+        cbmpc::ROLE_MISMATCH
+    );
+    drop(job);
+    assert_eq!(t.0, 0);
 }

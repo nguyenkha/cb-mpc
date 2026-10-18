@@ -63,19 +63,21 @@ text("go");
 
 const SID = new Uint8Array(32).fill(0x61), HASH = new Uint8Array(32).fill(0x33), MSG = new TextEncoder().encode("kexify refresh");
 
-/** One sign over the pipe; reports [1] ok / [0] failed to Rust and returns whether it worked. */
-async function sign(kind: "ecdsa" | "eddsa", key: unknown, pub: Uint8Array): Promise<boolean> {
-  let ok = false;
+const E_CRYPTO = 0xff040001 | 0; // ERRCODE(ECATEGORY_CRYPTO, 1): P1's proof / signature check failed
+
+/** One sign over the pipe; reports [1] ok, [0] rejected by P1's check (E_CRYPTO), [2] any other failure. */
+async function sign(kind: "ecdsa" | "eddsa", key: unknown, pub: Uint8Array): Promise<number> {
+  let ok = 2;
   try {
     if (kind === "ecdsa") {
       const [sig] = await mpc.ecdsa2pSign(pipe, 0, NAMES, key, SID, [HASH]);
-      ok = mpc.verifyDer(NID_secp256k1, pub, HASH, sig);
+      ok = mpc.verifyDer(NID_secp256k1, pub, HASH, sig) ? 1 : 2;
     } else {
       const sig = await mpc.schnorr2pEddsaSign(pipe, 0, NAMES, key, MSG);
-      ok = ed25519.verify(sig, MSG, ed25519Compressed(pub));
+      ok = ed25519.verify(sig, MSG, ed25519Compressed(pub)) ? 1 : 2;
     }
-  } catch { ok = false; }
-  control(new Uint8Array([ok ? 1 : 0]));
+  } catch (e) { ok = (e as { code?: number }).code === E_CRYPTO ? 0 : 2; }
+  control(new Uint8Array([ok]));
   return ok;
 }
 
@@ -95,9 +97,9 @@ for (const kind of ["ecdsa", "eddsa"] as const) {
     assert(eq(info(cur).publicKey, pub) && info(cur).roleIndex === 0, `${kind} refresh ${i} keeps the key`);
     control(info(cur).publicKey);
   }
-  assert(await sign(kind, cur, pub), `${kind} new + new signs`);
-  assert(!(await sign(kind, old, pub)), `${kind} old client + new server fails`);
-  assert(!(await sign(kind, cur, pub)), `${kind} new client + old server fails`);
+  assert((await sign(kind, cur, pub)) === 1, `${kind} new + new signs`);
+  assert((await sign(kind, old, pub)) === 0, `${kind} old client + new server fails`);
+  assert((await sign(kind, cur, pub)) === 0, `${kind} new client + old server fails`);
 }
 console.error(`refresh ms (WASM P1, ${RUNS} runs): ecdsa ${times.ecdsa.join(", ")}; eddsa ${times.eddsa.join(", ")}`);
 text("done");
