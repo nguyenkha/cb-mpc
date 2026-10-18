@@ -218,9 +218,10 @@ fn rust_server_party_refreshes_with_cb_mpc_ts() {
         return;
     };
     if p.control() == b"skip" {
+        // The installed release predates ecKey2pRefresh: only a given CBMPC_TS_DIR must have it.
         assert!(
-            std::env::var("CBMPC_REQUIRE_INTEROP").as_deref() != Ok("1"),
-            "the ts client has no ecKey2pRefresh: set CBMPC_TS_DIR to a cb-mpc-ts build"
+            std::env::var("CBMPC_TS_DIR").is_err(),
+            "CBMPC_TS_DIR has no ecKey2pRefresh: build cb-mpc-ts there first"
         );
         eprintln!(
             "skipping refresh interop: set CBMPC_TS_DIR to a cb-mpc-ts build with ecKey2pRefresh"
