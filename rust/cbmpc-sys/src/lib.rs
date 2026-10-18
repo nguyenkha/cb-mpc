@@ -111,6 +111,11 @@ extern "C" {
         msgs: cmems_t,
         sigs: *mut cmems_t,
     ) -> c_int;
+    pub fn mpc_ecdsa2p_refresh(
+        job: *mut job_2p_ref,
+        key: *mut mpc_ecdsa2pc_key_ref,
+        new_key: *mut mpc_ecdsa2pc_key_ref,
+    ) -> c_int;
     pub fn free_mpc_ecdsa2p_key(key: mpc_ecdsa2pc_key_ref);
     pub fn mpc_ecdsa2p_key_get_role_index(key: *mut mpc_ecdsa2pc_key_ref) -> c_int;
     pub fn mpc_ecdsa2p_key_get_Q(key: *mut mpc_ecdsa2pc_key_ref) -> ecc_point_ref;
@@ -130,6 +135,11 @@ extern "C" {
         key: *mut mpc_eckey_2p_ref,
         msg: cmem_t,
         sig: *mut cmem_t,
+    ) -> c_int;
+    pub fn mpc_eckey_2p_refresh(
+        job: *mut job_2p_ref,
+        key: *mut mpc_eckey_2p_ref,
+        new_key: *mut mpc_eckey_2p_ref,
     ) -> c_int;
     pub fn free_mpc_eckey_2p(key: mpc_eckey_2p_ref);
     pub fn mpc_eckey_2p_get_role_index(key: *mut mpc_eckey_2p_ref) -> c_int;

@@ -33,6 +33,23 @@ impl Ecdsa2pKey {
         Self::own("mpc_ecdsa2p_dkg", k)
     }
 
+    /// Key refresh (cb-mpc-ts `ecdsa2pRefresh`): both shares are re-randomized and P1 makes a new
+    /// Paillier key; the public key and role stay. `self` stays valid. Old and new shares do not
+    /// mix, but old + old still signs, so the caller must delete the old shares once both sides
+    /// hold the new ones.
+    pub fn refresh(&self, job: &mut Job2p<'_>) -> Result<Self> {
+        job.check_role("mpc_ecdsa2p_refresh", self.role_index()?)?;
+        let mut r = self.0;
+        let mut k = mpc_ecdsa2pc_key_ref {
+            opaque: std::ptr::null_mut(),
+        };
+        // SAFETY: valid job and key; k receives an owned handle on success.
+        let rv = unsafe { cbmpc_sys::mpc_ecdsa2p_refresh(job.raw(), &mut r, &mut k) };
+        let new_key = Self::own("mpc_ecdsa2p_refresh", k);
+        job.finish("mpc_ecdsa2p_refresh", rv)?;
+        new_key
+    }
+
     /// Signs all `hashes` in one session (`sign_batch`, same as cb-mpc-ts `ecdsa2pSign`) with the
     /// shared session id `sid`. P1 receives the DER signatures; P2 gets empty placeholders (one per
     /// hash), exactly as with cb-mpc-ts.

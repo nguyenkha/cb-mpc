@@ -727,6 +727,24 @@ export class CbMpc {
     }
   }
 
+  /**
+   * Refresh an EdDSA-2P key (EcKey2pHandle): both shares are re-randomized, the public key stays. The old handle stays
+   * valid and must be freed by the caller; once both sides hold the new shares, delete the old ones (old + old still
+   * signs, old + new does not).
+   */
+  async ecKey2pRefresh(
+    transport: DataTransport, partyIndex: number, partyNames: [string, string], key: EcKey2pHandle,
+  ): Promise<EcKey2pHandle> {
+    return this.withJob2p(transport, partyIndex, partyNames, "ecKey2pRefresh", async (job) => {
+      const ref = this.refOf(key as unknown as number);
+      try {
+        return (await this.hdHandleOp(job, "mpc_eckey_2p_refresh", "ecKey2pRefresh", ref)) as unknown as EcKey2pHandle;
+      } finally {
+        this.mod.free(ref);
+      }
+    });
+  }
+
   ecKey2pInfo(key: EcKey2pHandle): EcKey2pInfo {
     const keyRef = this.mod.allocRef();
     this.mod.setPointer(keyRef, key as unknown as number);

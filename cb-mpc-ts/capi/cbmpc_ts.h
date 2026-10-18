@@ -155,6 +155,7 @@ int deserialize_mpc_ecdsa2p(cmems_t ser, mpc_ecdsa2pc_key_ref* key);
 
 int mpc_eckey_2p_dkg(job_2p_ref* job, int curve_code, mpc_eckey_2p_ref* key);
 int mpc_schnorr2p_eddsa_sign(job_2p_ref* job, mpc_eckey_2p_ref* key, cmem_t msg, cmem_t* sig);
+int mpc_eckey_2p_refresh(job_2p_ref* job, mpc_eckey_2p_ref* key, mpc_eckey_2p_ref* new_key);
 void free_mpc_eckey_2p(mpc_eckey_2p_ref key);
 int mpc_eckey_2p_get_role_index(mpc_eckey_2p_ref* key);
 ecc_point_ref mpc_eckey_2p_get_Q(mpc_eckey_2p_ref* key);
