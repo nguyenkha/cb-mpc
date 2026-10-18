@@ -554,10 +554,13 @@ int mpc_ecdsa2p_dkg(job_2p_ref* j, int curve_code, mpc_ecdsa2pc_key_ref* k) {
 }
 
 int mpc_ecdsa2p_refresh(job_2p_ref* j, mpc_ecdsa2pc_key_ref* k, mpc_ecdsa2pc_key_ref* nk) {
+  if (nk && nk == k) return E_BADARG;  // in place would drop the old key's only reference unfreed
   if (nk) *nk = mpc_ecdsa2pc_key_ref{nullptr};
   return guard_rv([&]() -> int {
     job_2p_t* job = job_of(j);
     if (!job || !valid_ref(k) || !nk) return E_BADARG;
+    // The C++ protocol only cb_asserts this; a share used in the wrong seat must fail cleanly.
+    if (!job->is_party(as<ecdsa2pc::key_t>(k->opaque)->role)) return E_BADARG;
 
     auto new_key = std::make_unique<ecdsa2pc::key_t>();
     if (error_t rv = ecdsa2pc::refresh(*job, *as<ecdsa2pc::key_t>(k->opaque), *new_key)) return rv;
@@ -680,6 +683,23 @@ int mpc_schnorr2p_eddsa_sign(job_2p_ref* j, mpc_eckey_2p_ref* k, cmem_t msg, cme
                                      schnorr2p::variant_e::EdDSA))
       return rv;
     return copy_to_cmem_rv(sig, sig_out);
+  });
+}
+
+// Re-randomizes both shares (x1 + r, x2 - r, r from a coin toss); Q and role stay. Old and new shares do not mix.
+int mpc_eckey_2p_refresh(job_2p_ref* j, mpc_eckey_2p_ref* k, mpc_eckey_2p_ref* nk) {
+  if (nk && nk == k) return E_BADARG;  // in place would drop the old key's only reference unfreed
+  if (nk) *nk = mpc_eckey_2p_ref{nullptr};
+  return guard_rv([&]() -> int {
+    job_2p_t* job = job_of(j);
+    if (!job || !valid_ref(k) || !nk) return E_BADARG;
+    const auto& key = *as<eckey::key_share_2p_t>(k->opaque);
+    if (!job->is_party(key.role)) return E_BADARG;
+
+    auto new_key = std::make_unique<eckey::key_share_2p_t>();
+    if (error_t rv = eckey::key_share_2p_t::refresh(*job, key, *new_key)) return rv;
+    *nk = mpc_eckey_2p_ref{new_key.release()};
+    return 0;
   });
 }
 

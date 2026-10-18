@@ -88,6 +88,7 @@ export const FFI_SIGNATURES: Record<string, FfiSignature> = {
 
   // EC key 2P / Schnorr 2P
   mpc_eckey_2p_dkg: sig("i32", "ptr", "i32", "ptr"),
+  mpc_eckey_2p_refresh: sig("i32", "ptr", "ptr", "ptr"),
   wasm_mpc_schnorr2p_eddsa_sign: sig("i32", "ptr", "ptr", "ptr", "i32", "ptr"),
   wasm_free_mpc_eckey_2p: sig("void", "ptr"),
   mpc_eckey_2p_get_role_index: sig("i32", "ptr"),

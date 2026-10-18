@@ -32,6 +32,22 @@ impl EcKey2p {
         Self::own("mpc_eckey_2p_dkg", k)
     }
 
+    /// Key refresh (cb-mpc-ts `ecKey2pRefresh`): x1 + r / x2 - r with r from a coin toss; the
+    /// public key and role stay. `self` stays valid. Old and new shares do not mix, but old + old
+    /// still signs, so the caller must delete the old shares once both sides hold the new ones.
+    pub fn refresh(&self, job: &mut Job2p<'_>) -> Result<Self> {
+        job.check_role("mpc_eckey_2p_refresh", self.role_index()?)?;
+        let mut r = self.0;
+        let mut k = mpc_eckey_2p_ref {
+            opaque: std::ptr::null_mut(),
+        };
+        // SAFETY: valid job and key; k receives an owned handle on success.
+        let rv = unsafe { cbmpc_sys::mpc_eckey_2p_refresh(job.raw(), &mut r, &mut k) };
+        let new_key = Self::own("mpc_eckey_2p_refresh", k);
+        job.finish("mpc_eckey_2p_refresh", rv)?;
+        new_key
+    }
+
     /// Schnorr-2P EdDSA signature over the whole `message` (cb-mpc-ts `schnorr2pEddsaSign`).
     pub fn eddsa_sign(&self, job: &mut Job2p<'_>, message: &[u8]) -> Result<Vec<u8>> {
         job.check_role("mpc_schnorr2p_eddsa_sign", self.role_index()?)?;

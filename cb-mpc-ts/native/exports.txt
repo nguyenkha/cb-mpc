@@ -112,6 +112,7 @@ _deserialize_mpc_eckey_2p
 _mpc_ecdsampc_sign
 _mpc_eddsampc_sign
 _mpc_eckey_2p_dkg
+_mpc_eckey_2p_refresh
 _mpc_eckey_2p_get_role_index
 _mpc_eckey_2p_get_curve_code
 _mpc_agree_random

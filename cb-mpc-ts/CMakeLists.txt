@@ -196,6 +196,7 @@ set(EXPORTED_FUNCTIONS
   "_mpc_eddsampc_sign"
   # Schnorr 2P / EC Key 2P
   "_mpc_eckey_2p_dkg"
+  "_mpc_eckey_2p_refresh"
   "_wasm_free_mpc_eckey_2p"
   "_mpc_eckey_2p_get_role_index"
   "_mpc_eckey_2p_get_curve_code"
